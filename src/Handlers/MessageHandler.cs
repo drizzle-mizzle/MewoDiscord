@@ -31,14 +31,16 @@ public static class MessageHandler
         RegexOptions.Compiled);
 
     /// <summary>
+    /// Регулярка для схлопывания повторяющихся букв (хуууууй → хуй).
+    /// </summary>
+    private static readonly Regex RepeatedCharsRegex = new(
+        @"(.)\1+",
+        RegexOptions.Compiled);
+
+    /// <summary>
     /// Одиночные матерные слова из словаря (для поиска по токенам).
     /// </summary>
     private static HashSet<string> _swearWords = [];
-
-    /// <summary>
-    /// Матерные фразы из словаря (для поиска через Contains).
-    /// </summary>
-    private static List<string> _swearPhrases = [];
 
     /// <summary>
     /// Включён ли режим Анти-быдло. По умолчанию включён, сбрасывается при рестарте.
@@ -49,7 +51,7 @@ public static class MessageHandler
     {
         BadWordFilter.Instance.LoadFiles(true, BWFConstants.BWF_RU);
         LoadDictionary();
-        BotLogger.Information("Фильтр мата загружен ({Words} слов, {Phrases} фраз из словаря)", _swearWords.Count, _swearPhrases.Count);
+        BotLogger.Information("Фильтр мата загружен ({Words} слов)", _swearWords.Count);
     }
 
     public static async Task HandleMessageReceived(SocketMessage message)
@@ -69,7 +71,7 @@ public static class MessageHandler
             return;
         }
 
-        var text = userMessage.Content;
+        var text = NormalizeForSwearCheck(userMessage.Content);
 
         if (string.IsNullOrWhiteSpace(text))
         {
@@ -80,8 +82,7 @@ public static class MessageHandler
         var badWords = new List<string>(BadWordFilter.Instance.GetAll(text));
 
         // Поиск мата через собственный словарь
-        var lower = text.ToLowerInvariant();
-        var tokens = lower.Split([' ', ',', '.', '!', '?', '\n', '\r', '\t'], StringSplitOptions.RemoveEmptyEntries);
+        var tokens = text.Split([' ', ',', '!', '?', '\n', '\r', '\t'], StringSplitOptions.RemoveEmptyEntries);
 
         foreach (var token in tokens)
         {
@@ -91,31 +92,24 @@ public static class MessageHandler
             }
         }
 
-        foreach (var phrase in _swearPhrases)
-        {
-            if (lower.Contains(phrase) && !badWords.Contains(phrase))
-            {
-                badWords.Add(phrase);
-            }
-        }
-
         if (badWords.Count > 0)
         {
             BotLogger.Information("Обнаружен мат от {User}: {BadWords}", message.Author.Username, string.Join(", ", badWords));
             await HandleProfanityAsync(userMessage, badWords);
+
             return;
         }
 
         // Фоллбэк: регулярка + ИИ-верификация
-        await CheckWithRegexAsync(lower, userMessage);
+        await CheckWithRegexAsync(text, userMessage);
     }
 
     /// <summary>
     /// Проверяет текст регуляркой и, при срабатывании, верифицирует через ИИ.
     /// </summary>
-    private static async Task CheckWithRegexAsync(string lowerText, SocketUserMessage message)
+    private static async Task CheckWithRegexAsync(string text, SocketUserMessage message)
     {
-        var foundWords = FindSwearsByRegex(lowerText);
+        var foundWords = FindSwearsByRegex(text);
 
         if (foundWords.Count == 0)
         {
@@ -140,10 +134,9 @@ public static class MessageHandler
     /// Ищет мат в тексте по регулярке. Возвращает список уникальных совпадений.
     /// Перед проверкой нормализует текст (латинские двойники → кириллица, убирает разделители).
     /// </summary>
-    internal static List<string> FindSwearsByRegex(string lowerText)
+    internal static List<string> FindSwearsByRegex(string text)
     {
-        var normalized = NormalizeForSwearCheck(lowerText);
-        var matches = SwearRegex.Matches(normalized);
+        var matches = SwearRegex.Matches(text);
 
         return matches
             .Select(m => m.Value)
@@ -159,7 +152,7 @@ public static class MessageHandler
     {
         var sb = new StringBuilder(text.Length);
 
-        foreach (var ch in text)
+        foreach (var ch in text.ToLowerInvariant())
         {
             sb.Append(ch switch
             {
@@ -181,8 +174,13 @@ public static class MessageHandler
             });
         }
 
+        var result = sb.ToString();
+
+        // Схлопываем повторяющиеся буквы (хуууууй → хуй)
+        result = RepeatedCharsRegex.Replace(result, "$1");
+
         // Убираем разделители между буквами (п.и.з.д.а, х*у*й, б л я)
-        return SeparatorRegex.Replace(sb.ToString(), string.Empty);
+        return SeparatorRegex.Replace(result, string.Empty);
     }
 
     /// <summary>
@@ -222,7 +220,6 @@ public static class MessageHandler
                 .ToList();
 
             _swearWords = entries.Where(e => !e.Contains(' ')).ToHashSet();
-            _swearPhrases = entries.Where(e => e.Contains(' ')).ToList();
         }
         catch (Exception ex)
         {
