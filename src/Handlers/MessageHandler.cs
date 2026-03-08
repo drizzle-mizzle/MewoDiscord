@@ -94,8 +94,9 @@ public static class MessageHandler
 
         if (badWords.Count > 0)
         {
-            BotLogger.Information("Обнаружен мат от {User}: {BadWords}", message.Author.Username, string.Join(", ", badWords));
-            await HandleProfanityAsync(userMessage, badWords);
+            var originalBadWords = FindOriginalWords(userMessage.Content, badWords);
+            BotLogger.Information("Обнаружен мат от {User}: {BadWords}", message.Author.Username, string.Join(", ", originalBadWords));
+            await HandleProfanityAsync(userMessage, originalBadWords);
 
             return;
         }
@@ -116,9 +117,10 @@ public static class MessageHandler
             return;
         }
 
-        BotLogger.Information("Регулярка нашла подозрительные слова от {User}: {Words}", message.Author.Username, string.Join(", ", foundWords));
+        var originalWords = FindOriginalWords(message.Content, foundWords);
+        BotLogger.Information("Регулярка нашла подозрительные слова от {User}: {Words}", message.Author.Username, string.Join(", ", originalWords));
 
-        var confirmed = await VerifySwearsWithAiAsync(foundWords);
+        var confirmed = await VerifySwearsWithAiAsync(originalWords);
 
         if (!confirmed)
         {
@@ -126,8 +128,8 @@ public static class MessageHandler
             return;
         }
 
-        BotLogger.Information("ИИ подтвердил мат от {User}: {Words}", message.Author.Username, string.Join(", ", foundWords));
-        await HandleProfanityAsync(message, foundWords);
+        BotLogger.Information("ИИ подтвердил мат от {User}: {Words}", message.Author.Username, string.Join(", ", originalWords));
+        await HandleProfanityAsync(message, originalWords);
     }
 
     /// <summary>
@@ -142,6 +144,30 @@ public static class MessageHandler
             .Select(m => m.Value)
             .Distinct()
             .ToList();
+    }
+
+    /// <summary>
+    /// Находит оригинальные слова из исходного текста, соответствующие нормализованным матам.
+    /// Если маппинг не нашёлся — возвращает нормализованные слова как есть.
+    /// </summary>
+    private static List<string> FindOriginalWords(string originalText, IList<string> normalizedBadWords)
+    {
+        var originalTokens = originalText.ToLowerInvariant()
+            .Split([' ', ',', '!', '?', '\n', '\r', '\t'], StringSplitOptions.RemoveEmptyEntries);
+
+        var result = new List<string>();
+
+        foreach (var token in originalTokens)
+        {
+            var normalized = NormalizeForSwearCheck(token);
+
+            if (normalizedBadWords.Any(bw => normalized.Contains(bw)) && !result.Contains(token))
+            {
+                result.Add(token);
+            }
+        }
+
+        return result.Count > 0 ? result : normalizedBadWords.ToList();
     }
 
     /// <summary>
