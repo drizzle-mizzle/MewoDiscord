@@ -130,6 +130,7 @@ public static class MessageHandler
         }
 
         BotLogger.Information("ИИ подтвердил мат от {User}: {Words}", message.Author.Username, string.Join(", ", originalWords));
+        AddToDictionary(foundWords);
         await HandleProfanityAsync(message, originalWords);
     }
 
@@ -227,6 +228,34 @@ public static class MessageHandler
         }
 
         return reply.Trim().StartsWith("да", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Добавляет новые нормализованные слова в словарь (в память и в файл).
+    /// </summary>
+    private static void AddToDictionary(IList<string> normalizedWords)
+    {
+        var newWords = normalizedWords
+            .Select(w => w.Trim().ToLowerInvariant())
+            .Where(w => w.Length >= 2 && !w.Contains(' ') && _swearWords.Add(w))
+            .ToList();
+
+        if (newWords.Count == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            var existing = File.Exists(DictionaryPath) ? File.ReadAllText(DictionaryPath).Trim() : string.Empty;
+            var separator = existing.Length > 0 ? ", " : string.Empty;
+            File.WriteAllText(DictionaryPath, existing + separator + string.Join(", ", newWords));
+            BotLogger.Information("Словарь пополнен: {Words}", string.Join(", ", newWords));
+        }
+        catch (Exception ex)
+        {
+            BotLogger.Error("Ошибка записи в словарь: {Message}", ex.Message);
+        }
     }
 
     private static void LoadDictionary()
