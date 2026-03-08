@@ -11,7 +11,8 @@ namespace MewoDiscord.Handlers;
 
 public static class MessageHandler
 {
-    private const int ContextMessageCount = 5;
+    private const int ContextMessageCount = 10;
+    private const int ContextMaxTotalChars = 300;
 
     private static string DictionaryPath => Path.Combine(AppConfig.FilesDirectory, "swears.txt");
 
@@ -264,25 +265,45 @@ public static class MessageHandler
 
         // Формируем контекст: предыдущие (не старше 1 часа) + текущее
         var cutoff = message.Timestamp.AddHours(-1);
-        var contextLines = previousMessages
+        var allLines = previousMessages
             .Reverse()
             .Where(m => !string.IsNullOrWhiteSpace(m.Content) && m.Timestamp >= cutoff)
             .Select(m => $"{m.Author.Username}: {m.Content}")
             .ToList();
 
-        contextLines.Add($"{message.Author.Username}: {message.Content}");
+        var currentLine = $"{message.Author.Username}: {message.Content}";
+
+        // Обрезаем старые сообщения, если суммарно больше лимита (минимум одно остаётся)
+        var totalChars = currentLine.Length;
+        var contextLines = new List<string>();
+
+        for (var i = allLines.Count - 1; i >= 0; i--)
+        {
+            if (totalChars + allLines[i].Length > ContextMaxTotalChars && contextLines.Count > 0)
+            {
+                break;
+            }
+
+            totalChars += allLines[i].Length;
+            contextLines.Insert(0, allLines[i]);
+        }
+
+        contextLines.Add(currentLine);
 
         var context = string.Join('\n', contextLines);
         var user = message.Author.Username;
         var badWordsStr = string.Join(", ", badWords);
+        var botName = (message.Channel as SocketGuildChannel)?.Guild.CurrentUser.DisplayName ?? "Bot";
 
         // Подставляем плейсхолдеры в промпт
-        var prompt = cfg.MessagePrompt
+        var userMessagePrompt = cfg.MessagePrompt
             .Replace("{context}", context)
             .Replace("{user}", user)
             .Replace("{badWords}", badWordsStr);
 
-        var reply = await AnthropicClient.CompleteAsync(AppConfig.AnthropicApiKey, cfg.Model, userMessage: prompt, systemPrompt: cfg.SystemPrompt, maxTokens: cfg.MaxTokens);
+        var systemPrompt = cfg.SystemPrompt.Replace("{botName}", botName);
+
+        var reply = await AnthropicClient.CompleteAsync(AppConfig.AnthropicApiKey, cfg.Model, userMessage: userMessagePrompt, systemPrompt: systemPrompt, maxTokens: cfg.MaxTokens);
 
         if (!string.IsNullOrEmpty(reply))
         {
