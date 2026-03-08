@@ -1,0 +1,9 @@
+**/.git
+**/bin
+**/obj
+**/publish
+**/logs
+**/.vs
+**/.idea
+*.md
+src/Files/config.ini

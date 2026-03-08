@@ -1,0 +1,11 @@
+services:
+  mewo-bot:
+    build: .
+    container_name: mewo-discord
+    restart: unless-stopped
+    volumes:
+      - ./src/Files/config.ini:/app/Files/config.ini:ro
+      - bot-logs:/app/logs
+
+volumes:
+  bot-logs:

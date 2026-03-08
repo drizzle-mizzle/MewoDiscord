@@ -1,0 +1,21 @@
+## .NET
+bin/
+obj/
+publish/
+
+## Secrets
+src/Files/config.ini
+
+## IDE
+.idea/
+.vs/
+*.user
+*.suo
+
+## Logs
+logs/
+
+## OS
+Thumbs.db
+Desktop.ini
+.DS_Store
