@@ -57,17 +57,23 @@ public static class MessageHandler
 
     public static async Task HandleMessageReceived(SocketMessage message)
     {
-        if (!IsCensorEnabled)
-        {
-            return;
-        }
-
         if (message.Author.IsBot)
         {
             return;
         }
 
         if (message is not SocketUserMessage userMessage)
+        {
+            return;
+        }
+
+        // Верификация — проверяем до цензуры
+        if (await VerificationHandler.TryHandleAsync(userMessage))
+        {
+            return;
+        }
+
+        if (!IsCensorEnabled)
         {
             return;
         }

@@ -12,6 +12,8 @@ public static class AppConfig
     public static ulong VoiceStatusChannel => GetUlong("COMMON", nameof(VoiceStatusChannel));
     public static string AnthropicApiKey => Get("COMMON", nameof(AnthropicApiKey));
     public static ulong LogsChannel => GetUlong("COMMON", nameof(LogsChannel));
+    public static ulong VerificationChannel => GetUlong("COMMON", nameof(VerificationChannel));
+    public static ulong VerificationRole => GetUlong("COMMON", nameof(VerificationRole));
 
     public static AnthropicSectionConfig CensorSettings { get; } = new("ANTHROPIC_CENSOR_SETTINGS");
     public static AnthropicSectionConfig SwearsCheckerSettings { get; } = new("ANTHROPIC_SWEARS_CHECKER_SETTINGS");

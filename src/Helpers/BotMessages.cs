@@ -44,6 +44,21 @@ public static class BotMessages
     public static string VoiceUserStoppedStream(string user, string channel, string timer) =>
         Format(nameof(VoiceUserStoppedStream), ("{user}", user), ("{channel}", channel), ("{timer}", timer));
 
+    public static string PurgeDone(string count) =>
+        Format(nameof(PurgeDone), ("{count}", count));
+
+    public static string PurgeTooOld(string count) =>
+        Format(nameof(PurgeTooOld), ("{count}", count));
+
+    public static string PurgeNoPermission() =>
+        Format(nameof(PurgeNoPermission));
+
+    public static string PurgeNotTextChannel() =>
+        Format(nameof(PurgeNotTextChannel));
+
+    public static string VerificationDone(string user) =>
+        Format(nameof(VerificationDone), ("{user}", user));
+
     #region Internals
 
     private static readonly string MessagesPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Files", "messages.ini");
