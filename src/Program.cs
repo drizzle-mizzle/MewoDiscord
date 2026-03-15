@@ -1,4 +1,5 @@
 using Discord;
+using Discord.Interactions;
 using Discord.WebSocket;
 
 using MewoDiscord.Handlers;
@@ -13,6 +14,7 @@ namespace MewoDiscord;
 internal class Program
 {
     private static DiscordSocketClient? _client;
+    private static InteractionService? _interactions;
 
     private static async Task Main()
     {
@@ -38,17 +40,21 @@ internal class Program
         };
 
         _client = new DiscordSocketClient(config);
+        _interactions = new InteractionService(_client.Rest);
         BotLogger.SetClient(_client);
 
         // Инициализация обработчиков
         MessageHandler.Initialize();
 
+        // Регистрация модулей команд
+        await _interactions.AddModulesAsync(typeof(Program).Assembly, services: null);
+
         // Обработчики событий
         _client.Log += OnLog;
-        _client.Ready += () => CommandHandler.RegisterCommandsAsync(_client);
-        _client.InteractionCreated += CommandHandler.HandleInteractionCreated;
-        _client.MessageReceived += MessageHandler.HandleMessageReceived;
-        _client.UserVoiceStateUpdated += VoiceStatusHandler.HandleVoiceStateUpdated;
+        _client.Ready += () => RunInBackground(OnReady());
+        _client.InteractionCreated += interaction => RunInBackground(OnInteractionCreated(interaction));
+        _client.MessageReceived += message => RunInBackground(MessageHandler.HandleMessageReceived(message));
+        _client.UserVoiceStateUpdated += (user, before, after) => RunInBackground(VoiceStatusHandler.HandleVoiceStateUpdated(user, before, after));
 
         // Подключение к Discord
         await _client.LoginAsync(TokenType.Bot, AppConfig.BotToken);
@@ -74,6 +80,38 @@ internal class Program
         BotLogger.Information("Завершение работы бота...");
         await _client.StopAsync();
         await Log.CloseAndFlushAsync();
+    }
+
+    private static async Task OnReady()
+    {
+        await _interactions!.RegisterCommandsGloballyAsync();
+        BotLogger.Information("Слеш-команды зарегистрированы");
+    }
+
+    private static async Task OnInteractionCreated(SocketInteraction interaction)
+    {
+        var context = new SocketInteractionContext(_client!, interaction);
+        await _interactions!.ExecuteCommandAsync(context, services: null);
+    }
+
+    /// <summary>
+    /// Запускает задачу в фоне, не блокируя gateway. Ошибки логируются.
+    /// </summary>
+    private static Task RunInBackground(Task task)
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await task;
+            }
+            catch (Exception ex)
+            {
+                BotLogger.Error("Необработанная ошибка в обработчике: {Message}", ex.Message);
+            }
+        });
+
+        return Task.CompletedTask;
     }
 
     private static Task OnLog(LogMessage message)
