@@ -58,8 +58,6 @@ public static class VerificationHandler
         }
 
         await guildUser.AddRoleAsync(role);
-        await message.Channel.SendMessageAsync(
-            BotMessages.VerificationDone(message.Author.Mention));
 
         BotLogger.Information("{User} прошёл верификацию в #{Channel}", guildUser.Username, message.Channel.Name);
 

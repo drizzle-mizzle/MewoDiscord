@@ -56,9 +56,6 @@ public static class BotMessages
     public static string PurgeNotTextChannel() =>
         Format(nameof(PurgeNotTextChannel));
 
-    public static string VerificationDone(string user) =>
-        Format(nameof(VerificationDone), ("{user}", user));
-
     #region Internals
 
     private static readonly string MessagesPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Files", "messages.ini");
