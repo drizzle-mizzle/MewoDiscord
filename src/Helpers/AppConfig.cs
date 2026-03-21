@@ -11,19 +11,24 @@ public static class AppConfig
     public static string BotToken => Get("COMMON", nameof(BotToken));
     public static ulong VoiceStatusChannel => GetUlong("COMMON", nameof(VoiceStatusChannel));
     public static string AnthropicApiKey => Get("COMMON", nameof(AnthropicApiKey));
+    public static string OpenRouterApiKey => Get("COMMON", nameof(OpenRouterApiKey));
+    public static string AiProvider => Get("COMMON", nameof(AiProvider), "Anthropic");
     public static ulong LogsChannel => GetUlong("COMMON", nameof(LogsChannel));
     public static ulong VerificationChannel => GetUlong("COMMON", nameof(VerificationChannel));
     public static ulong VerificationRole => GetUlong("COMMON", nameof(VerificationRole));
 
-    public static AnthropicSectionConfig CensorSettings { get; } = new("ANTHROPIC_CENSOR_SETTINGS");
-    public static AnthropicSectionConfig SwearsCheckerSettings { get; } = new("ANTHROPIC_SWEARS_CHECKER_SETTINGS");
+    public static AiSectionConfig CensorSettings { get; } = new("ANTHROPIC_CENSOR_SETTINGS");
+    public static AiSectionConfig SwearsCheckerSettings { get; } = new("ANTHROPIC_SWEARS_CHECKER_SETTINGS");
+    public static AiSectionConfig ChatSettings { get; } = new("AI_CHAT_SETTINGS");
 
     /// <summary>
-    /// Типизированная секция настроек Anthropic API (модель, токены, промпты).
+    /// Типизированная секция настроек ИИ-провайдера (модели, токены, промпты).
     /// </summary>
-    public record AnthropicSectionConfig(string SectionName)
+    public record AiSectionConfig(string SectionName)
     {
-        public string Model => Get(SectionName, "AnthropicModel", "claude-haiku-4-5");
+        public string AnthropicModel => Get(SectionName, "AnthropicModel", "claude-haiku-4-5");
+
+        public string OpenRouterModel => Get(SectionName, "OpenRouterModel", "google/gemini-2.0-flash-001");
 
         public int MaxTokens => GetInt(SectionName, "MaxTokens", 50);
 
@@ -32,11 +37,6 @@ public static class AppConfig
         public string SystemPrompt => Get(SectionName, "SystemPrompt");
 
         public string SystemPrompt2 => Get(SectionName, "SystemPrompt2");
-
-        public string SystemPrompt3 => Get(SectionName, "SystemPrompt3");
-
-        public string SystemPrompt4 => Get(SectionName, "SystemPrompt4");
-
         public string MessagePrompt => Get(SectionName, "MessagePrompt");
 
         /// <summary>
@@ -48,8 +48,6 @@ public static class AppConfig
             var prompt = level switch
             {
                 2 => SystemPrompt2,
-                3 => SystemPrompt3,
-                4 => SystemPrompt4,
                 _ => SystemPrompt,
             };
 

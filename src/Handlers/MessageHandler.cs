@@ -14,7 +14,9 @@ public static class MessageHandler
 {
     private const int ContextMessageCount = 10;
     private const int ContextMaxTotalChars = 300;
-    private const int MaxHeatLevel = 4;
+    private const int ChatContextMessageCount = 15;
+    private const int ChatContextMaxTotalChars = 1500;
+    private const int MaxHeatLevel = 2;
     private static readonly TimeSpan HeatCooldown = TimeSpan.FromMinutes(5);
     private static readonly double[] HeatTemperatureBonus = [0, 0, 0.15, 0.3, 0.5];
 
@@ -76,6 +78,13 @@ public static class MessageHandler
         // Верификация — проверяем до цензуры
         if (await VerificationHandler.TryHandleAsync(userMessage))
         {
+            return;
+        }
+
+        // Чат-бот: реагируем на пинг и ответы на сообщения бота
+        if (IsBotAddressed(userMessage))
+        {
+            await HandleChatAsync(userMessage);
             return;
         }
 
@@ -232,7 +241,7 @@ public static class MessageHandler
         var swearsStr = string.Join(", ", foundWords);
         var prompt = cfg.MessagePrompt.Replace("{swears}", swearsStr);
 
-        var reply = await AnthropicClient.CompleteAsync(AppConfig.AnthropicApiKey, cfg.Model, userMessage: prompt, systemPrompt: cfg.SystemPrompt, maxTokens: cfg.MaxTokens, temperature: cfg.Temperature);
+        var reply = await AiClient.CompleteAsync(cfg, userMessage: prompt, systemPrompt: cfg.SystemPrompt, maxTokens: cfg.MaxTokens, temperature: cfg.Temperature);
 
         if (string.IsNullOrWhiteSpace(reply))
         {
@@ -352,7 +361,7 @@ public static class MessageHandler
 
         BotLogger.Information("Накал для {User}: уровень {Level}, температура {Temperature:F2}", user, heatLevel, temperature);
 
-        var reply = await AnthropicClient.CompleteAsync(AppConfig.AnthropicApiKey, cfg.Model, userMessage: userMessagePrompt, systemPrompt: systemPrompt, maxTokens: cfg.MaxTokens, temperature: temperature);
+        var reply = await AiClient.CompleteAsync(cfg, userMessage: userMessagePrompt, systemPrompt: systemPrompt, maxTokens: cfg.MaxTokens, temperature: temperature);
 
         if (!string.IsNullOrEmpty(reply))
         {
@@ -388,6 +397,98 @@ public static class MessageHandler
             });
 
         return state.Level;
+    }
+
+    /// <summary>
+    /// Проверяет, обращено ли сообщение к боту (пинг или ответ на сообщение бота).
+    /// </summary>
+    private static bool IsBotAddressed(SocketUserMessage message)
+    {
+        var guild = (message.Channel as SocketGuildChannel)?.Guild;
+
+        if (guild is null)
+        {
+            return false;
+        }
+
+        var botId = guild.CurrentUser.Id;
+
+        // Прямой пинг бота
+        if (message.MentionedUsers.Any(u => u.Id == botId))
+        {
+            return true;
+        }
+
+        // Ответ на сообщение бота
+        if (message.Reference?.MessageId.IsSpecified == true)
+        {
+            var referenced = message.Channel.GetCachedMessage(message.Reference.MessageId.Value);
+
+            if (referenced?.Author.Id == botId)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Обрабатывает обращение к боту: собирает контекст и генерирует ответ через ИИ.
+    /// </summary>
+    private static async Task HandleChatAsync(SocketUserMessage message)
+    {
+        var cfg = AppConfig.ChatSettings;
+
+        if (string.IsNullOrEmpty(cfg.SystemPrompt))
+        {
+            return;
+        }
+
+        var guild = (message.Channel as SocketGuildChannel)?.Guild;
+        var botName = guild?.CurrentUser.DisplayName ?? "Bot";
+
+        // Собираем контекст из предыдущих сообщений
+        var previousMessages = await message.Channel
+            .GetMessagesAsync(message, Direction.Before, ChatContextMessageCount)
+            .FlattenAsync();
+
+        var cutoff = message.Timestamp.AddHours(-1);
+        var contextLines = new List<string>();
+        var totalChars = 0;
+
+        foreach (var msg in previousMessages.Reverse().Where(m => !string.IsNullOrWhiteSpace(m.Content) && m.Timestamp >= cutoff))
+        {
+            if (totalChars + msg.Content.Length > ChatContextMaxTotalChars && contextLines.Count > 0)
+            {
+                break;
+            }
+
+            var line = $"{msg.Author.Username}: {msg.Content}";
+            contextLines.Add(line);
+            totalChars += line.Length;
+        }
+
+        contextLines.Add($"{message.Author.Username}: {message.Content}");
+
+        var context = string.Join('\n', contextLines);
+        var user = message.Author.Username;
+
+        var userMessagePrompt = cfg.MessagePrompt
+            .Replace("{context}", context)
+            .Replace("{user}", user);
+
+        var systemPrompt = cfg.SystemPrompt.Replace("{botName}", botName);
+
+        BotLogger.Information("Чат-запрос от {User}", user);
+
+        using var typing = message.Channel.EnterTypingState();
+        var reply = await AiClient.CompleteAsync(cfg, userMessage: userMessagePrompt, systemPrompt: systemPrompt, maxTokens: cfg.MaxTokens, temperature: cfg.Temperature);
+
+        if (!string.IsNullOrEmpty(reply))
+        {
+            await message.Channel.SendMessageAsync(reply, messageReference: new MessageReference(message.Id));
+        }
     }
 
     private class UserHeatState
