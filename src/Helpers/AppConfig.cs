@@ -27,9 +27,34 @@ public static class AppConfig
 
         public int MaxTokens => GetInt(SectionName, "MaxTokens", 50);
 
+        public double Temperature => GetDouble(SectionName, "Temperature", 1.0);
+
         public string SystemPrompt => Get(SectionName, "SystemPrompt");
 
+        public string SystemPrompt2 => Get(SectionName, "SystemPrompt2");
+
+        public string SystemPrompt3 => Get(SectionName, "SystemPrompt3");
+
+        public string SystemPrompt4 => Get(SectionName, "SystemPrompt4");
+
         public string MessagePrompt => Get(SectionName, "MessagePrompt");
+
+        /// <summary>
+        /// Возвращает системный промпт для указанного уровня накала (1-4).
+        /// Если промпт для уровня не задан, возвращает базовый SystemPrompt.
+        /// </summary>
+        public string GetSystemPromptForHeatLevel(int level)
+        {
+            var prompt = level switch
+            {
+                2 => SystemPrompt2,
+                3 => SystemPrompt3,
+                4 => SystemPrompt4,
+                _ => SystemPrompt,
+            };
+
+            return string.IsNullOrEmpty(prompt) ? SystemPrompt : prompt;
+        }
     }
 
     #region Internals
@@ -77,6 +102,58 @@ public static class AppConfig
 
     public static ulong GetUlong(string section, string key, ulong defaultValue = 0) =>
         ulong.TryParse(Get(section, key), out var result) ? result : defaultValue;
+
+    public static double GetDouble(string section, string key, double defaultValue = 0) =>
+        double.TryParse(Get(section, key), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var result) ? result : defaultValue;
+
+    /// <summary>
+    /// Записывает значение в указанную секцию config.ini.
+    /// Если ключ уже существует — обновляет, иначе — добавляет в конец секции.
+    /// </summary>
+    public static void Set(string section, string key, string value)
+    {
+        if (!File.Exists(ConfigPath))
+        {
+            return;
+        }
+
+        var lines = File.ReadAllLines(ConfigPath).ToList();
+        var sectionHeader = $"[{section}]";
+        var sectionIndex = lines.FindIndex(l => l.Trim().Equals(sectionHeader, StringComparison.OrdinalIgnoreCase));
+
+        if (sectionIndex < 0)
+        {
+            return;
+        }
+
+        // Ищем ключ внутри секции
+        for (var i = sectionIndex + 1; i < lines.Count; i++)
+        {
+            var trimmed = lines[i].Trim();
+
+            // Следующая секция — ключ не найден
+            if (trimmed.StartsWith('[') && trimmed.EndsWith(']'))
+            {
+                // Вставляем перед следующей секцией
+                lines.Insert(i, $"{key}: {value}");
+                File.WriteAllLines(ConfigPath, lines);
+                return;
+            }
+
+            var colonIndex = trimmed.IndexOf(':');
+
+            if (colonIndex > 0 && !trimmed[..colonIndex].Contains(' ') && trimmed[..colonIndex].Trim() == key)
+            {
+                lines[i] = $"{key}: {value}";
+                File.WriteAllLines(ConfigPath, lines);
+                return;
+            }
+        }
+
+        // Ключ не найден, секция последняя — добавляем в конец
+        lines.Add($"{key}: {value}");
+        File.WriteAllLines(ConfigPath, lines);
+    }
 
     private static void Reload()
     {

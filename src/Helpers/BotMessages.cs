@@ -56,6 +56,9 @@ public static class BotMessages
     public static string PurgeNotTextChannel() =>
         Format(nameof(PurgeNotTextChannel));
 
+    public static string SetTemperature(string value) =>
+        Format(nameof(SetTemperature), ("{value}", value));
+
     #region Internals
 
     private static readonly string MessagesPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Files", "messages.ini");

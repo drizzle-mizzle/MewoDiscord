@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text;
 using System.Text.RegularExpressions;
 using BogaNet.BWF;
@@ -13,6 +14,11 @@ public static class MessageHandler
 {
     private const int ContextMessageCount = 10;
     private const int ContextMaxTotalChars = 300;
+    private const int MaxHeatLevel = 4;
+    private static readonly TimeSpan HeatCooldown = TimeSpan.FromMinutes(5);
+    private static readonly double[] HeatTemperatureBonus = [0, 0, 0.15, 0.3, 0.5];
+
+    private static readonly ConcurrentDictionary<ulong, UserHeatState> _heatMap = new();
 
     private static string DictionaryPath => Path.Combine(AppConfig.FilesDirectory, "swears.txt");
 
@@ -226,7 +232,7 @@ public static class MessageHandler
         var swearsStr = string.Join(", ", foundWords);
         var prompt = cfg.MessagePrompt.Replace("{swears}", swearsStr);
 
-        var reply = await AnthropicClient.CompleteAsync(AppConfig.AnthropicApiKey, cfg.Model, userMessage: prompt, systemPrompt: cfg.SystemPrompt, maxTokens: cfg.MaxTokens);
+        var reply = await AnthropicClient.CompleteAsync(AppConfig.AnthropicApiKey, cfg.Model, userMessage: prompt, systemPrompt: cfg.SystemPrompt, maxTokens: cfg.MaxTokens, temperature: cfg.Temperature);
 
         if (string.IsNullOrWhiteSpace(reply))
         {
@@ -292,6 +298,10 @@ public static class MessageHandler
     private static async Task HandleProfanityAsync(SocketUserMessage message, IList<string> badWords)
     {
         var cfg = AppConfig.CensorSettings;
+        var userId = message.Author.Id;
+
+        // Определяем уровень накала для пользователя
+        var heatLevel = GetAndUpdateHeatLevel(userId);
 
         // Качаем предыдущие сообщения для контекста
         var previousMessages = await message.Channel
@@ -336,13 +346,54 @@ public static class MessageHandler
             .Replace("{user}", user)
             .Replace("{badWords}", badWordsStr);
 
-        var systemPrompt = cfg.SystemPrompt.Replace("{botName}", botName);
+        // Выбираем системный промпт и температуру по уровню накала
+        var systemPrompt = cfg.GetSystemPromptForHeatLevel(heatLevel).Replace("{botName}", botName);
+        var temperature = Math.Min(cfg.Temperature + HeatTemperatureBonus[heatLevel], 1.0);
 
-        var reply = await AnthropicClient.CompleteAsync(AppConfig.AnthropicApiKey, cfg.Model, userMessage: userMessagePrompt, systemPrompt: systemPrompt, maxTokens: cfg.MaxTokens);
+        BotLogger.Information("Накал для {User}: уровень {Level}, температура {Temperature:F2}", user, heatLevel, temperature);
+
+        var reply = await AnthropicClient.CompleteAsync(AppConfig.AnthropicApiKey, cfg.Model, userMessage: userMessagePrompt, systemPrompt: systemPrompt, maxTokens: cfg.MaxTokens, temperature: temperature);
 
         if (!string.IsNullOrEmpty(reply))
         {
             await message.Channel.SendMessageAsync(reply);
         }
+    }
+
+    /// <summary>
+    /// Возвращает текущий уровень накала для пользователя и обновляет состояние.
+    /// Если с последнего нарушения прошло больше 5 минут — сброс на 1.
+    /// Иначе — уровень повышается (макс 4).
+    /// </summary>
+    private static int GetAndUpdateHeatLevel(ulong userId)
+    {
+        var now = DateTime.UtcNow;
+
+        var state = _heatMap.AddOrUpdate(
+            userId,
+            _ => new UserHeatState { Level = 1, LastViolationTime = now },
+            (_, existing) =>
+            {
+                if (now - existing.LastViolationTime > HeatCooldown)
+                {
+                    existing.Level = 1;
+                }
+                else if (existing.Level < MaxHeatLevel)
+                {
+                    existing.Level++;
+                }
+
+                existing.LastViolationTime = now;
+                return existing;
+            });
+
+        return state.Level;
+    }
+
+    private class UserHeatState
+    {
+        public int Level { get; set; }
+
+        public DateTime LastViolationTime { get; set; }
     }
 }
