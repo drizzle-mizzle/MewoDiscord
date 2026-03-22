@@ -12,12 +12,13 @@ namespace MewoDiscord.Handlers;
 
 public static class MessageHandler
 {
-    private const int ContextMessageCount = 30;
-    private const int ContextMaxTotalChars = 800;
-    private const int ChatContextMessageCount = 30;
-    private const int ChatContextMaxTotalChars = 800;
+    private const int ShortContextMessages = 10;
+    private const int ShortContextMaxChars = 500;
+    private const int ChatContextMessages = 20;
+    private const int ChatContextMaxChars = 2000;
     private const int MaxHeatLevel = 3;
     private const int ConversationTrackMessages = 3;
+    private const int CachePropagationDelayMs = 500;
     private static readonly TimeSpan HeatCooldown = TimeSpan.FromMinutes(3);
     private static readonly double[] HeatTemperatureBonus = [0, 0, 0.25, 0.25];
 
@@ -366,7 +367,7 @@ public static class MessageHandler
         // Определяем уровень накала для пользователя
         var heatLevel = GetAndUpdateHeatLevel(userId);
 
-        var context = await BuildContextAsync(message, ContextMessageCount, ContextMaxTotalChars);
+        var context = await BuildContextAsync(message, ShortContextMessages, ShortContextMaxChars);
         var user = GetDisplayName(message.Author, guild);
         var badWordsStr = string.Join(", ", badWords);
         var botName = guild?.CurrentUser.DisplayName ?? "Bot";
@@ -390,6 +391,7 @@ public static class MessageHandler
         {
             await message.Channel.SendMessageAsync(reply);
             StartTrackingConversation(message.Channel.Id);
+            await Task.Delay(CachePropagationDelayMs);
         }
     }
 
@@ -582,7 +584,7 @@ public static class MessageHandler
         var guild = (message.Channel as SocketGuildChannel)?.Guild;
         var botName = guild?.CurrentUser.DisplayName ?? "Bot";
 
-        var context = await BuildContextAsync(message, ChatContextMessageCount, ChatContextMaxTotalChars, includeIds: true);
+        var context = await BuildContextAsync(message, ChatContextMessages, ChatContextMaxChars, includeIds: true);
         var user = GetDisplayName(message.Author, guild);
 
         var userMessagePrompt = cfg.MessagePrompt
@@ -601,6 +603,7 @@ public static class MessageHandler
         {
             await message.Channel.SendMessageAsync(reply);
             StartTrackingConversation(message.Channel.Id);
+            await Task.Delay(CachePropagationDelayMs);
         }
     }
 
@@ -664,7 +667,7 @@ public static class MessageHandler
         var guild = (message.Channel as SocketGuildChannel)?.Guild;
         var botName = guild?.CurrentUser.DisplayName ?? "Bot";
 
-        var context = await BuildContextAsync(message, ContextMessageCount, ContextMaxTotalChars);
+        var context = await BuildContextAsync(message, ShortContextMessages, ShortContextMaxChars);
         var user = GetDisplayName(message.Author, guild);
 
         var prompt = cfg.MessagePrompt
