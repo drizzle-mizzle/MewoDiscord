@@ -15,7 +15,7 @@ public class ToggleCommands : InteractionModuleBase<SocketInteractionContext>
         MessageHandler.IsCensorEnabled = !MessageHandler.IsCensorEnabled;
 
         var status = MessageHandler.IsCensorEnabled ? "включён ✅" : "выключен ❌";
-        BotLogger.Information("Режим Анти-быдло {Status} пользователем {User}", status, Context.User.Username);
+        BotLogger.LogCommand("/toggle anti-bydlo → {Status} — выполнил {User}", status, Context.User.Username);
 
         await RespondAsync(
             $"Режим **Анти-быдло** {status}",

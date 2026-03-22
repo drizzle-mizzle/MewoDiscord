@@ -86,6 +86,7 @@ internal class Program
     {
         await _interactions!.RegisterCommandsGloballyAsync();
         BotLogger.Information("Слеш-команды зарегистрированы");
+        await BotLogger.InitializeSessionAsync();
     }
 
     private static async Task OnInteractionCreated(SocketInteraction interaction)

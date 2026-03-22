@@ -18,7 +18,7 @@ public static class OpenRouterClient
     /// </summary>
     public static Task<string> CompleteAsync(string apiKey, string model, string userMessage, string? systemPrompt = null, int? maxTokens = null, double? temperature = null)
     {
-        var messages = new List<AnthropicClient.ChatMessage>
+        var messages = new List<ChatMessage>
         {
             new() { Role = "user", Content = userMessage }
         };
@@ -29,7 +29,7 @@ public static class OpenRouterClient
     /// <summary>
     /// Отправляет историю сообщений и возвращает текстовый ответ.
     /// </summary>
-    public static async Task<string> CompleteAsync(string apiKey, string model, List<AnthropicClient.ChatMessage> messages, string? systemPrompt = null, int? maxTokens = null, double? temperature = null)
+    public static async Task<string> CompleteAsync(string apiKey, string model, List<ChatMessage> messages, string? systemPrompt = null, int? maxTokens = null, double? temperature = null)
     {
         if (string.IsNullOrEmpty(apiKey))
         {
@@ -79,6 +79,18 @@ public static class OpenRouterClient
     }
 
     #region Модели данных
+
+    /// <summary>
+    /// Сообщение чата (user/assistant).
+    /// </summary>
+    public class ChatMessage
+    {
+        [JsonPropertyName("role")]
+        public required string Role { get; init; }
+
+        [JsonPropertyName("content")]
+        public required string Content { get; init; }
+    }
 
     private class ApiMessage
     {

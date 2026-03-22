@@ -94,7 +94,7 @@ public class SwearRegexTests
 
     /// <summary>
     /// Проверяет полный цикл: регулярка + ИИ-верификация.
-    /// Использует config.ini из основного проекта (нужен рабочий AnthropicApiKey).
+    /// Использует config.ini из основного проекта (нужен рабочий OpenRouterApiKey).
     /// </summary>
     [Theory]
     [InlineData("ебать")]

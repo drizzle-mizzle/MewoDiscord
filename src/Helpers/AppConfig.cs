@@ -10,15 +10,14 @@ public static class AppConfig
 {
     public static string BotToken => Get("COMMON", nameof(BotToken));
     public static ulong VoiceStatusChannel => GetUlong("COMMON", nameof(VoiceStatusChannel));
-    public static string AnthropicApiKey => Get("COMMON", nameof(AnthropicApiKey));
     public static string OpenRouterApiKey => Get("COMMON", nameof(OpenRouterApiKey));
-    public static string AiProvider => Get("COMMON", nameof(AiProvider), "Anthropic");
     public static ulong LogsChannel => GetUlong("COMMON", nameof(LogsChannel));
     public static ulong VerificationChannel => GetUlong("COMMON", nameof(VerificationChannel));
     public static ulong VerificationRole => GetUlong("COMMON", nameof(VerificationRole));
+    public static string LocalTimeZone => Get("COMMON", nameof(LocalTimeZone), "Europe/Kiev");
 
-    public static AiSectionConfig CensorSettings { get; } = new("ANTHROPIC_CENSOR_SETTINGS");
-    public static AiSectionConfig SwearsCheckerSettings { get; } = new("ANTHROPIC_SWEARS_CHECKER_SETTINGS");
+    public static AiSectionConfig CensorSettings { get; } = new("AI_CENSOR_SETTINGS");
+    public static AiSectionConfig SwearsCheckerSettings { get; } = new("AI_SWEARS_CHECKER_SETTINGS");
     public static AiSectionConfig ChatSettings { get; } = new("AI_CHAT_SETTINGS");
     public static AiSectionConfig ContinuationCheckerSettings { get; } = new("AI_CONTINUATION_CHECKER_SETTINGS");
 
@@ -27,9 +26,7 @@ public static class AppConfig
     /// </summary>
     public record AiSectionConfig(string SectionName)
     {
-        public string AnthropicModel => Get(SectionName, "AnthropicModel", "claude-haiku-4-5");
-
-        public string OpenRouterModel => Get(SectionName, "OpenRouterModel", "google/gemini-2.0-flash-001");
+        public string Model => Get(SectionName, "Model", "x-ai/grok-3-mini");
 
         public int MaxTokens => GetInt(SectionName, "MaxTokens", 50);
 
@@ -37,23 +34,7 @@ public static class AppConfig
 
         public string SystemPrompt => Get(SectionName, "SystemPrompt");
 
-        public string SystemPrompt2 => Get(SectionName, "SystemPrompt2");
         public string MessagePrompt => Get(SectionName, "MessagePrompt");
-
-        /// <summary>
-        /// Возвращает системный промпт для указанного уровня накала (1-4).
-        /// Если промпт для уровня не задан, возвращает базовый SystemPrompt.
-        /// </summary>
-        public string GetSystemPromptForHeatLevel(int level)
-        {
-            var prompt = level switch
-            {
-                2 => SystemPrompt2,
-                _ => SystemPrompt,
-            };
-
-            return string.IsNullOrEmpty(prompt) ? SystemPrompt : prompt;
-        }
     }
 
     #region Internals

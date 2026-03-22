@@ -13,7 +13,7 @@ public class SayCommand : InteractionModuleBase<SocketInteractionContext>
         string text)
     {
         await Context.Channel.SendMessageAsync(text);
-        BotLogger.Information("{User} использовал /say в #{Channel}", Context.User.Username, Context.Channel.Name);
+        BotLogger.LogCommand("{User} использовал /say в #{Channel}", Context.User.Username, Context.Channel.Name);
         await RespondAsync("✅", ephemeral: true);
     }
 }

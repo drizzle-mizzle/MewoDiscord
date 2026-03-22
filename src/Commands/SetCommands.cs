@@ -18,10 +18,10 @@ public class SetCommands : InteractionModuleBase<SocketInteractionContext>
     {
         var valueStr = значение.ToString("F1", CultureInfo.InvariantCulture);
 
-        AppConfig.Set("ANTHROPIC_CENSOR_SETTINGS", "Temperature", valueStr);
-        AppConfig.Set("ANTHROPIC_SWEARS_CHECKER_SETTINGS", "Temperature", valueStr);
+        AppConfig.Set("AI_CENSOR_SETTINGS", "Temperature", valueStr);
+        AppConfig.Set("AI_SWEARS_CHECKER_SETTINGS", "Temperature", valueStr);
 
-        BotLogger.Information("Температура ИИ изменена на {Temperature} пользователем {User}", valueStr, Context.User.Username);
+        BotLogger.LogCommand("/set temperature {Temperature} — выполнил {User}", valueStr, Context.User.Username);
 
         await RespondAsync(
             BotMessages.SetTemperature(valueStr),

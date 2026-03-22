@@ -56,6 +56,9 @@ public static class BotMessages
     public static string PurgeNotTextChannel() =>
         Format(nameof(PurgeNotTextChannel));
 
+    public static string PurgeBadDateFormat() =>
+        Format(nameof(PurgeBadDateFormat));
+
     public static string SetTemperature(string value) =>
         Format(nameof(SetTemperature), ("{value}", value));
 

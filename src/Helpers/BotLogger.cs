@@ -7,12 +7,31 @@ using Serilog.Events;
 namespace MewoDiscord.Helpers;
 
 /// <summary>
-/// Логгер-обёртка: пишет в Serilog и отправляет сообщения в текстовый канал Discord.
+/// Логгер-обёртка: пишет в Serilog и отправляет сообщения в Discord-треды.
+/// При старте создаёт тред для слеш-команд и по треду на каждую ИИ-конфигурацию.
 /// </summary>
 public static partial class BotLogger
 {
+    private const string CommandsThreadKey = "commands";
+
     private static DiscordSocketClient? _client;
     private static ulong _channelId;
+
+    /// <summary>
+    /// Треды текущей сессии: ключ → тред.
+    /// </summary>
+    private static readonly Dictionary<string, IThreadChannel> _threads = new();
+
+    /// <summary>
+    /// AI-секции, для которых создаются отдельные треды.
+    /// </summary>
+    private static readonly (string Key, string DisplayName, Func<AppConfig.AiSectionConfig> GetConfig)[] AiSections =
+    [
+        ("AI_CENSOR_SETTINGS", "AI Censor", () => AppConfig.CensorSettings),
+        ("AI_SWEARS_CHECKER_SETTINGS", "AI Swears Checker", () => AppConfig.SwearsCheckerSettings),
+        ("AI_CHAT_SETTINGS", "AI Chat", () => AppConfig.ChatSettings),
+        ("AI_CONTINUATION_CHECKER_SETTINGS", "AI Continuation Checker", () => AppConfig.ContinuationCheckerSettings),
+    ];
 
     /// <summary>
     /// Устанавливает клиент Discord и читает ID канала логов из конфига.
@@ -24,82 +43,140 @@ public static partial class BotLogger
         _channelId = AppConfig.LogsChannel;
     }
 
-    public static void Information(string template, params object[] args)
+    /// <summary>
+    /// Инициализирует сессию логирования: отправляет стартовое сообщение и создаёт треды.
+    /// Вызывать из OnReady() после регистрации команд.
+    /// </summary>
+    public static async Task InitializeSessionAsync()
     {
-        Log.Information(template, args);
-        SendToDiscord(LogEventLevel.Information, template, args);
-    }
-
-    public static void Warning(string template, params object[] args)
-    {
-        Log.Warning(template, args);
-        SendToDiscord(LogEventLevel.Warning, template, args);
-    }
-
-    public static void Error(string template, params object[] args)
-    {
-        Log.Error(template, args);
-        SendToDiscord(LogEventLevel.Error, template, args);
-    }
-
-    public static void Error(Exception? exception, string template, params object[] args)
-    {
-        Log.Error(exception, template, args);
-        SendToDiscord(LogEventLevel.Error, template, args);
-    }
-
-    public static void Write(LogEventLevel level, Exception? exception, string template, params object[] args)
-    {
-        Log.Write(level, exception, template, args);
-        SendToDiscord(level, template, args);
-    }
-
-    private static void SendToDiscord(LogEventLevel level, string template, object[] args)
-    {
-        // Не спамим Debug/Verbose в Discord
-        if (level < LogEventLevel.Information)
-        {
-            return;
-        }
-
-        // Клиент не установлен или канал не настроен
         if (_client is null || _channelId == 0)
         {
             return;
         }
 
-        // Клиент не подключён
-        if (_client.ConnectionState != ConnectionState.Connected)
+        if (_client.GetChannel(_channelId) is not ITextChannel channel)
+        {
+            Log.Warning("Канал логов {ChannelId} не найден", _channelId);
+            return;
+        }
+
+        try
+        {
+            // Стартовое сообщение
+            var startEmbed = new EmbedBuilder()
+                .WithTitle("Бот запущен")
+                .WithDescription($"Сессия: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC")
+                .WithColor(Color.Green)
+                .WithCurrentTimestamp()
+                .Build();
+
+            var startMessage = await channel.SendMessageAsync(embed: startEmbed);
+
+            // Тред для слеш-команд
+            var cmdThread = await channel.CreateThreadAsync(
+                "Слеш-команды",
+                message: startMessage);
+
+            _threads[CommandsThreadKey] = cmdThread;
+
+            // Треды для каждой AI-конфигурации
+            foreach (var (key, displayName, getConfig) in AiSections)
+            {
+                var thread = await channel.CreateThreadAsync(
+                    displayName,
+                    message: startMessage);
+
+                _threads[key] = thread;
+
+                // Первое сообщение — текущая конфигурация
+                var cfg = getConfig();
+                var configText = $"⚙️ **Конфигурация {key}**\n" +
+                                 $"Модель: `{cfg.Model}`\n" +
+                                 $"Температура: `{cfg.Temperature}`\n" +
+                                 $"MaxTokens: `{cfg.MaxTokens}`";
+
+                await thread.SendMessageAsync(configText);
+            }
+
+            Log.Information("Сессия логирования инициализирована: {ThreadCount} тредов", _threads.Count);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Ошибка инициализации сессии логирования");
+        }
+    }
+
+    #region Serilog-обёртки (только файл + консоль, без Discord)
+
+    public static void Information(string template, params object[] args)
+    {
+        Log.Information(template, args);
+    }
+
+    public static void Warning(string template, params object[] args)
+    {
+        Log.Warning(template, args);
+    }
+
+    public static void Error(string template, params object[] args)
+    {
+        Log.Error(template, args);
+    }
+
+    public static void Error(Exception? exception, string template, params object[] args)
+    {
+        Log.Error(exception, template, args);
+    }
+
+    public static void Write(LogEventLevel level, Exception? exception, string template, params object[] args)
+    {
+        Log.Write(level, exception, template, args);
+    }
+
+    #endregion
+
+    #region Discord-треды
+
+    /// <summary>
+    /// Логирует сообщение в тред слеш-команд.
+    /// </summary>
+    public static void LogCommand(string template, params object[] args)
+    {
+        Log.Information(template, args);
+        SendToThread(CommandsThreadKey, template, args);
+    }
+
+    /// <summary>
+    /// Логирует сообщение в тред указанной AI-конфигурации.
+    /// </summary>
+    public static void LogAi(string configName, string template, params object[] args)
+    {
+        Log.Information(template, args);
+        SendToThread(configName, template, args);
+    }
+
+    private static void SendToThread(string threadKey, string template, object[] args)
+    {
+        if (!_threads.TryGetValue(threadKey, out var thread))
         {
             return;
         }
 
-        // Fire-and-forget: не блокируем вызывающий код
         _ = Task.Run(async () =>
         {
             try
             {
-                if (_client.GetChannel(_channelId) is not ITextChannel channel)
-                {
-                    return;
-                }
-
                 var message = RenderTemplate(template, args);
+                var timestamp = DateTime.UtcNow.ToString("HH:mm:ss");
+                var text = $"`[{timestamp}]` {message}";
 
-                // Обрезаем, если сообщение слишком длинное для embed
-                if (message.Length > 4000)
+                // Discord ограничение — 2000 символов
+                if (text.Length > 2000)
                 {
-                    message = message[..4000] + "...";
+                    text = text[..1997] + "...";
                 }
 
-                var embed = new EmbedBuilder()
-                    .WithTitle(GetLevelName(level))
-                    .WithDescription(message)
-                    .WithColor(GetColor(level))
-                    .WithCurrentTimestamp()
-                    .Build();
-
-                await channel.SendMessageAsync(embed: embed);
+                await thread.SendMessageAsync(text);
             }
             catch
             {
@@ -107,6 +184,8 @@ public static partial class BotLogger
             }
         });
     }
+
+    #endregion
 
     /// <summary>
     /// Заменяет {Named} плейсхолдеры Serilog аргументами по порядку.
@@ -130,24 +209,6 @@ public static partial class BotLogger
             return match.Value;
         });
     }
-
-    private static Color GetColor(LogEventLevel level) => level switch
-    {
-        LogEventLevel.Information => Color.Green,
-        LogEventLevel.Warning => Color.Gold,
-        LogEventLevel.Error => Color.Red,
-        LogEventLevel.Fatal => Color.DarkRed,
-        _ => Color.Default
-    };
-
-    private static string GetLevelName(LogEventLevel level) => level switch
-    {
-        LogEventLevel.Information => "INFO",
-        LogEventLevel.Warning => "WARNING",
-        LogEventLevel.Error => "ERROR",
-        LogEventLevel.Fatal => "FATAL",
-        _ => "LOG"
-    };
 
     [GeneratedRegex(@"\{[A-Za-z_]\w*\}")]
     private static partial Regex TemplatePlaceholder();

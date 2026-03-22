@@ -16,10 +16,10 @@ public static class MessageHandler
     private const int ContextMaxTotalChars = 500;
     private const int ChatContextMessageCount = 15;
     private const int ChatContextMaxTotalChars = 2000;
-    private const int MaxHeatLevel = 2;
+    private const int MaxHeatLevel = 3;
     private const int ConversationTrackMessages = 5;
     private static readonly TimeSpan HeatCooldown = TimeSpan.FromMinutes(5);
-    private static readonly double[] HeatTemperatureBonus = [0, 0, 0.15, 0.3, 0.5];
+    private static readonly double[] HeatTemperatureBonus = [0, 0, 0.5, 0.5];
 
     private static readonly ConcurrentDictionary<ulong, UserHeatState> _heatMap = new();
     private static readonly ConcurrentDictionary<ulong, int> _activeConversations = new();
@@ -125,7 +125,7 @@ public static class MessageHandler
         if (badWords.Count > 0)
         {
             var originalBadWords = FindOriginalWords(userMessage.Content, badWords);
-            BotLogger.Information("Обнаружен мат от {User}: {BadWords}", message.Author.Username, string.Join(", ", originalBadWords));
+            BotLogger.LogAi("AI_CENSOR_SETTINGS", "Обнаружен мат от {User}: {BadWords}", message.Author.Username, string.Join(", ", originalBadWords));
             await HandleProfanityAsync(userMessage, originalBadWords);
 
             return;
@@ -148,17 +148,17 @@ public static class MessageHandler
         }
 
         var originalWords = FindOriginalWords(message.Content, foundWords);
-        BotLogger.Information("Регулярка нашла подозрительные слова от {User}: {Words}", message.Author.Username, string.Join(", ", originalWords));
+        BotLogger.LogAi("AI_SWEARS_CHECKER_SETTINGS", "Регулярка нашла подозрительные слова от {User}: {Words}", message.Author.Username, string.Join(", ", originalWords));
 
         var confirmed = await VerifySwearsWithAiAsync(originalWords);
 
         if (!confirmed)
         {
-            BotLogger.Information("ИИ не подтвердил мат от {User}", message.Author.Username);
+            BotLogger.LogAi("AI_SWEARS_CHECKER_SETTINGS", "ИИ не подтвердил мат от {User}", message.Author.Username);
             return;
         }
 
-        BotLogger.Information("ИИ подтвердил мат от {User}: {Words}", message.Author.Username, string.Join(", ", originalWords));
+        BotLogger.LogAi("AI_SWEARS_CHECKER_SETTINGS", "ИИ подтвердил мат от {User}: {Words}", message.Author.Username, string.Join(", ", originalWords));
         AddToDictionary(foundWords);
         await HandleProfanityAsync(message, originalWords);
     }
@@ -364,10 +364,10 @@ public static class MessageHandler
             .Replace("{badWords}", badWordsStr);
 
         // Выбираем системный промпт и температуру по уровню накала
-        var systemPrompt = cfg.GetSystemPromptForHeatLevel(heatLevel).Replace("{botName}", botName);
-        var temperature = Math.Min(cfg.Temperature + HeatTemperatureBonus[heatLevel], 1.0);
+        var systemPrompt = cfg.SystemPrompt.Replace("{botName}", botName);
+        var temperature = cfg.Temperature + HeatTemperatureBonus[heatLevel];
 
-        BotLogger.Information("Накал для {User}: уровень {Level}, температура {Temperature:F2}", user, heatLevel, temperature);
+        BotLogger.LogAi("AI_CENSOR_SETTINGS", "Накал для {User}: уровень {Level}, температура {Temperature:F2}", user, heatLevel, temperature);
 
         var reply = await AiClient.CompleteAsync(cfg, userMessage: userMessagePrompt, systemPrompt: systemPrompt, maxTokens: cfg.MaxTokens, temperature: temperature);
 
@@ -381,7 +381,7 @@ public static class MessageHandler
     /// <summary>
     /// Возвращает текущий уровень накала для пользователя и обновляет состояние.
     /// Если с последнего нарушения прошло больше 5 минут — сброс на 1.
-    /// Иначе — уровень повышается (макс 4).
+    /// Иначе — уровень повышается (макс 3). Бонус температуры: 1→+0, 2→+0.5, 3→+1.0.
     /// </summary>
     private static int GetAndUpdateHeatLevel(ulong userId)
     {
@@ -497,7 +497,7 @@ public static class MessageHandler
 
         var systemPrompt = cfg.SystemPrompt.Replace("{botName}", botName);
 
-        BotLogger.Information("Чат-запрос от {User}", user);
+        BotLogger.LogAi("AI_CHAT_SETTINGS", "Чат-запрос от {User}", user);
 
         using var typing = message.Channel.EnterTypingState();
         var reply = await AiClient.CompleteAsync(cfg, userMessage: userMessagePrompt, systemPrompt: systemPrompt, maxTokens: cfg.MaxTokens, temperature: cfg.Temperature);
@@ -534,7 +534,7 @@ public static class MessageHandler
         if (remaining <= 1)
         {
             _activeConversations.TryRemove(channelId, out _);
-            BotLogger.Information("Диалог в канале {Channel} остыл (лимит сообщений)", message.Channel.Name);
+            BotLogger.LogAi("AI_CONTINUATION_CHECKER_SETTINGS", "Диалог в канале {Channel} остыл (лимит сообщений)", message.Channel.Name);
             return false;
         }
 
@@ -548,7 +548,7 @@ public static class MessageHandler
             return false;
         }
 
-        BotLogger.Information("Продолжение диалога в канале {Channel} от {User} (осталось {Remaining})", message.Channel.Name, GetDisplayName(message.Author), remaining - 1);
+        BotLogger.LogAi("AI_CONTINUATION_CHECKER_SETTINGS", "Продолжение диалога в канале {Channel} от {User} (осталось {Remaining})", message.Channel.Name, GetDisplayName(message.Author), remaining - 1);
         await HandleChatAsync(message);
         return true;
     }
