@@ -12,10 +12,10 @@ namespace MewoDiscord.Handlers;
 
 public static class MessageHandler
 {
-    private const int ContextMessageCount = 10;
-    private const int ContextMaxTotalChars = 300;
+    private const int ContextMessageCount = 20;
+    private const int ContextMaxTotalChars = 500;
     private const int ChatContextMessageCount = 15;
-    private const int ChatContextMaxTotalChars = 1500;
+    private const int ChatContextMaxTotalChars = 2000;
     private const int MaxHeatLevel = 2;
     private static readonly TimeSpan HeatCooldown = TimeSpan.FromMinutes(5);
     private static readonly double[] HeatTemperatureBonus = [0, 0, 0.15, 0.3, 0.5];
@@ -322,10 +322,10 @@ public static class MessageHandler
         var allLines = previousMessages
             .Reverse()
             .Where(m => !string.IsNullOrWhiteSpace(m.Content) && m.Timestamp >= cutoff)
-            .Select(m => $"{m.Author.Username}: {m.Content}")
+            .Select(m => $"{GetDisplayName(m.Author)}: {m.Content}")
             .ToList();
 
-        var currentLine = $"{message.Author.Username}: {message.Content}";
+        var currentLine = $"{GetDisplayName(message.Author)}: {message.Content}";
 
         // Обрезаем старые сообщения, если суммарно больше лимита (минимум одно остаётся)
         var totalChars = currentLine.Length;
@@ -345,7 +345,7 @@ public static class MessageHandler
         contextLines.Add(currentLine);
 
         var context = string.Join('\n', contextLines);
-        var user = message.Author.Username;
+        var user = GetDisplayName(message.Author);
         var badWordsStr = string.Join(", ", badWords);
         var botName = (message.Channel as SocketGuildChannel)?.Guild.CurrentUser.DisplayName ?? "Bot";
 
@@ -397,6 +397,14 @@ public static class MessageHandler
             });
 
         return state.Level;
+    }
+
+    /// <summary>
+    /// Возвращает серверное отображаемое имя (ник) пользователя, либо Username как фоллбэк.
+    /// </summary>
+    private static string GetDisplayName(IUser user)
+    {
+        return user is IGuildUser guildUser ? guildUser.DisplayName : user.Username;
     }
 
     /// <summary>
@@ -464,15 +472,15 @@ public static class MessageHandler
                 break;
             }
 
-            var line = $"{msg.Author.Username}: {msg.Content}";
+            var line = $"{GetDisplayName(msg.Author)}: {msg.Content}";
             contextLines.Add(line);
             totalChars += line.Length;
         }
 
-        contextLines.Add($"{message.Author.Username}: {message.Content}");
+        contextLines.Add($"{GetDisplayName(message.Author)}: {message.Content}");
 
         var context = string.Join('\n', contextLines);
-        var user = message.Author.Username;
+        var user = GetDisplayName(message.Author);
 
         var userMessagePrompt = cfg.MessagePrompt
             .Replace("{context}", context)
