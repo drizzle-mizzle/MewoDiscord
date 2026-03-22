@@ -448,11 +448,20 @@ public static class MessageHandler
     }
 
     /// <summary>
+    /// Форматирует автора для контекста: "имя" или "имя (id: 123)" если includeIds = true.
+    /// </summary>
+    private static string FormatAuthor(IUser user, IGuild? guild, bool includeIds)
+    {
+        var name = GetDisplayName(user, guild);
+        return includeIds ? $"{name} (id: {user.Id})" : name;
+    }
+
+    /// <summary>
     /// Собирает контекст из предыдущих сообщений канала.
     /// Берёт до messageCount сообщений, добавляет текущее, затем удаляет самые старые (с начала)
     /// пока суммарная длина превышает maxChars. Минимум 2 сообщения остаются всегда (даже если > maxChars).
     /// </summary>
-    private static async Task<string> BuildContextAsync(SocketUserMessage message, int messageCount, int maxChars)
+    private static async Task<string> BuildContextAsync(SocketUserMessage message, int messageCount, int maxChars, bool includeIds = false)
     {
         var guild = (message.Channel as SocketGuildChannel)?.Guild;
 
@@ -464,10 +473,10 @@ public static class MessageHandler
         var contextLines = previousMessages
             .Reverse()
             .Where(m => !string.IsNullOrWhiteSpace(m.Content) && m.Timestamp >= cutoff)
-            .Select(m => $"{GetDisplayName(m.Author, guild)}: {ResolveMentions(m.Content, guild)}")
+            .Select(m => $"{FormatAuthor(m.Author, guild, includeIds)}: {ResolveMentions(m.Content, guild)}")
             .ToList();
 
-        contextLines.Add($"{GetDisplayName(message.Author, guild)}: {ResolveMentions(message.Content, guild)}");
+        contextLines.Add($"{FormatAuthor(message.Author, guild, includeIds)}: {ResolveMentions(message.Content, guild)}");
 
         // Удаляем самые старые сообщения с начала, пока не влезаем в лимит.
         // Минимум 2 сообщения остаются всегда.
@@ -573,7 +582,7 @@ public static class MessageHandler
         var guild = (message.Channel as SocketGuildChannel)?.Guild;
         var botName = guild?.CurrentUser.DisplayName ?? "Bot";
 
-        var context = await BuildContextAsync(message, ChatContextMessageCount, ChatContextMaxTotalChars);
+        var context = await BuildContextAsync(message, ChatContextMessageCount, ChatContextMaxTotalChars, includeIds: true);
         var user = GetDisplayName(message.Author, guild);
 
         var userMessagePrompt = cfg.MessagePrompt
@@ -590,7 +599,7 @@ public static class MessageHandler
 
         if (!string.IsNullOrEmpty(reply))
         {
-            await message.Channel.SendMessageAsync(reply, messageReference: new MessageReference(message.Id));
+            await message.Channel.SendMessageAsync(reply);
             StartTrackingConversation(message.Channel.Id);
         }
     }
