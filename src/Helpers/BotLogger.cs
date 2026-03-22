@@ -65,7 +65,7 @@ public static partial class BotLogger
             // Стартовое сообщение
             var startEmbed = new EmbedBuilder()
                 .WithTitle("Бот запущен")
-                .WithDescription($"Сессия: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC")
+                .WithDescription($"Сессия: {GetLocalNow():yyyy-MM-dd HH:mm:ss}")
                 .WithColor(Color.Green)
                 .WithCurrentTimestamp()
                 .Build();
@@ -167,7 +167,7 @@ public static partial class BotLogger
             try
             {
                 var message = RenderTemplate(template, args);
-                var timestamp = DateTime.UtcNow.ToString("HH:mm:ss");
+                var timestamp = GetLocalNow().ToString("HH:mm:ss");
                 var text = $"`[{timestamp}]` {message}";
 
                 // Discord ограничение — 2000 символов
@@ -208,6 +208,22 @@ public static partial class BotLogger
 
             return match.Value;
         });
+    }
+
+    /// <summary>
+    /// Возвращает текущее время в локальной таймзоне из конфига.
+    /// </summary>
+    private static DateTime GetLocalNow()
+    {
+        try
+        {
+            var tz = TimeZoneInfo.FindSystemTimeZoneById(AppConfig.LocalTimeZone);
+            return TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, tz);
+        }
+        catch
+        {
+            return DateTime.UtcNow;
+        }
     }
 
     [GeneratedRegex(@"\{[A-Za-z_]\w*\}")]

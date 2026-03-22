@@ -343,6 +343,7 @@ public static class MessageHandler
     {
         var cfg = AppConfig.CensorSettings;
         var userId = message.Author.Id;
+        var guild = (message.Channel as SocketGuildChannel)?.Guild;
 
         // Определяем уровень накала для пользователя
         var heatLevel = GetAndUpdateHeatLevel(userId);
@@ -357,10 +358,10 @@ public static class MessageHandler
         var allLines = previousMessages
             .Reverse()
             .Where(m => !string.IsNullOrWhiteSpace(m.Content) && m.Timestamp >= cutoff)
-            .Select(m => $"{GetDisplayName(m.Author)}: {m.Content}")
+            .Select(m => $"{GetDisplayName(m.Author)}: {ResolveMentions(m.Content, guild)}")
             .ToList();
 
-        var currentLine = $"{GetDisplayName(message.Author)}: {message.Content}";
+        var currentLine = $"{GetDisplayName(message.Author)}: {ResolveMentions(message.Content, guild)}";
 
         // Обрезаем старые сообщения, если суммарно больше лимита (минимум одно остаётся)
         var totalChars = currentLine.Length;
@@ -388,7 +389,8 @@ public static class MessageHandler
         var userMessagePrompt = cfg.MessagePrompt
             .Replace("{context}", context)
             .Replace("{user}", user)
-            .Replace("{badWords}", badWordsStr);
+            .Replace("{badWords}", badWordsStr)
+            .Replace("{botName}", botName);
 
         // Выбираем системный промпт и температуру по уровню накала
         var systemPrompt = cfg.SystemPrompt.Replace("{botName}", botName);
@@ -441,6 +443,43 @@ public static class MessageHandler
     private static string GetDisplayName(IUser user)
     {
         return user is IGuildUser guildUser ? guildUser.DisplayName : user.Username;
+    }
+
+    /// <summary>
+    /// Регулярка для Discord-упоминаний: &lt;@123&gt;, &lt;@!123&gt;, &lt;#123&gt;, &lt;@&amp;123&gt;.
+    /// </summary>
+    private static readonly Regex MentionRegex = new(
+        @"<(?:@!?|#|@&)(\d+)>",
+        RegexOptions.Compiled);
+
+    /// <summary>
+    /// Заменяет Discord-упоминания в тексте на отображаемые имена.
+    /// </summary>
+    private static string ResolveMentions(string text, IGuild? guild)
+    {
+        if (guild is null)
+        {
+            return text;
+        }
+
+        return MentionRegex.Replace(text, match =>
+        {
+            if (!ulong.TryParse(match.Groups[1].Value, out var id))
+            {
+                return match.Value;
+            }
+
+            var prefix = match.Value[1]; // '@' или '#'
+
+            if (prefix == '#')
+            {
+                var channel = guild.GetChannelAsync(id).GetAwaiter().GetResult();
+                return channel is not null ? $"#{channel.Name}" : match.Value;
+            }
+
+            var user = guild.GetUserAsync(id).GetAwaiter().GetResult();
+            return user is not null ? $"@{user.DisplayName}" : match.Value;
+        });
     }
 
     /// <summary>
@@ -508,19 +547,20 @@ public static class MessageHandler
                 break;
             }
 
-            var line = $"{GetDisplayName(msg.Author)}: {msg.Content}";
+            var line = $"{GetDisplayName(msg.Author)}: {ResolveMentions(msg.Content, guild)}";
             contextLines.Add(line);
             totalChars += line.Length;
         }
 
-        contextLines.Add($"{GetDisplayName(message.Author)}: {message.Content}");
+        contextLines.Add($"{GetDisplayName(message.Author)}: {ResolveMentions(message.Content, guild)}");
 
         var context = string.Join('\n', contextLines);
         var user = GetDisplayName(message.Author);
 
         var userMessagePrompt = cfg.MessagePrompt
             .Replace("{context}", context)
-            .Replace("{user}", user);
+            .Replace("{user}", user)
+            .Replace("{botName}", botName);
 
         var systemPrompt = cfg.SystemPrompt.Replace("{botName}", botName);
 
@@ -611,20 +651,26 @@ public static class MessageHandler
                 break;
             }
 
-            var line = $"{GetDisplayName(msg.Author)}: {msg.Content}";
+            var line = $"{GetDisplayName(msg.Author)}: {ResolveMentions(msg.Content, guild)}";
             contextLines.Add(line);
             totalChars += line.Length;
         }
 
-        contextLines.Add($"{GetDisplayName(message.Author)}: {message.Content}");
+        contextLines.Add($"{GetDisplayName(message.Author)}: {ResolveMentions(message.Content, guild)}");
         var context = string.Join('\n', contextLines);
+
+        var user = GetDisplayName(message.Author);
 
         var prompt = cfg.MessagePrompt
             .Replace("{context}", context)
-            .Replace("{user}", GetDisplayName(message.Author))
+            .Replace("{user}", user)
             .Replace("{botName}", botName);
 
-        var reply = await AiClient.CompleteAsync(cfg, userMessage: prompt, systemPrompt: cfg.SystemPrompt, maxTokens: cfg.MaxTokens, temperature: cfg.Temperature);
+        var systemPrompt = cfg.SystemPrompt
+            .Replace("{user}", user)
+            .Replace("{botName}", botName);
+
+        var reply = await AiClient.CompleteAsync(cfg, userMessage: prompt, systemPrompt: systemPrompt, maxTokens: cfg.MaxTokens, temperature: cfg.Temperature);
 
         if (string.IsNullOrWhiteSpace(reply))
         {

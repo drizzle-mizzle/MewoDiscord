@@ -4,7 +4,7 @@ namespace MewoDiscord.Utils;
 
 /// <summary>
 /// Точка входа для ИИ-запросов через OpenRouter API.
-/// Логирует промпты и ответы в соответствующий AI-тред.
+/// Логирует полный запрос (system + prompt) и ответ в соответствующий AI-тред.
 /// </summary>
 public static class AiClient
 {
@@ -13,16 +13,12 @@ public static class AiClient
     /// </summary>
     public static async Task<string> CompleteAsync(AppConfig.AiSectionConfig cfg, string userMessage, string? systemPrompt = null, int? maxTokens = null, double? temperature = null)
     {
-        BotLogger.LogAi(cfg.SectionName, "📤 Промпт: {Prompt}", userMessage);
+        LogRequest(cfg.SectionName, systemPrompt, userMessage);
 
         var reply = await OpenRouterClient.CompleteAsync(
             AppConfig.OpenRouterApiKey, cfg.Model, userMessage, systemPrompt, maxTokens, temperature);
 
-        if (!string.IsNullOrEmpty(reply))
-        {
-            BotLogger.LogAi(cfg.SectionName, "📥 Ответ: {Reply}", reply);
-        }
-
+        LogResponse(cfg.SectionName, reply);
         return reply;
     }
 
@@ -32,16 +28,44 @@ public static class AiClient
     public static async Task<string> CompleteAsync(AppConfig.AiSectionConfig cfg, List<OpenRouterClient.ChatMessage> messages, string? systemPrompt = null, int? maxTokens = null, double? temperature = null)
     {
         var lastMessage = messages.LastOrDefault()?.Content ?? "(пусто)";
-        BotLogger.LogAi(cfg.SectionName, "📤 Промпт: {Prompt}", lastMessage);
+        LogRequest(cfg.SectionName, systemPrompt, lastMessage);
 
         var reply = await OpenRouterClient.CompleteAsync(
             AppConfig.OpenRouterApiKey, cfg.Model, messages, systemPrompt, maxTokens, temperature);
 
-        if (!string.IsNullOrEmpty(reply))
+        LogResponse(cfg.SectionName, reply);
+        return reply;
+    }
+
+    /// <summary>
+    /// Логирует полный запрос к ИИ: system prompt + user prompt в одном сообщении.
+    /// </summary>
+    private static void LogRequest(string sectionName, string? systemPrompt, string userMessage)
+    {
+        var parts = new List<string>();
+
+        if (!string.IsNullOrEmpty(systemPrompt))
         {
-            BotLogger.LogAi(cfg.SectionName, "📥 Ответ: {Reply}", reply);
+            parts.Add($"🧠 System:\n{systemPrompt}");
         }
 
-        return reply;
+        parts.Add($"📤 Prompt:\n{userMessage}");
+
+        BotLogger.LogAi(sectionName, string.Join("\n\n", parts));
+    }
+
+    /// <summary>
+    /// Логирует ответ от ИИ.
+    /// </summary>
+    private static void LogResponse(string sectionName, string reply)
+    {
+        if (!string.IsNullOrEmpty(reply))
+        {
+            BotLogger.LogAi(sectionName, "📥 Ответ: {Reply}", reply);
+        }
+        else
+        {
+            BotLogger.LogAi(sectionName, "⚠️ Пустой ответ от ИИ");
+        }
     }
 }
