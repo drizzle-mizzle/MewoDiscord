@@ -366,42 +366,10 @@ public static class MessageHandler
         // Определяем уровень накала для пользователя
         var heatLevel = GetAndUpdateHeatLevel(userId);
 
-        // Качаем предыдущие сообщения для контекста
-        var previousMessages = await message.Channel
-            .GetMessagesAsync(message, Direction.Before, ContextMessageCount)
-            .FlattenAsync();
-
-        // Формируем контекст: предыдущие (не старше 1 часа) + текущее
-        var cutoff = message.Timestamp.AddHours(-1);
-        var allLines = previousMessages
-            .Reverse()
-            .Where(m => !string.IsNullOrWhiteSpace(m.Content) && m.Timestamp >= cutoff)
-            .Select(m => $"{GetDisplayName(m.Author)}: {ResolveMentions(m.Content, guild)}")
-            .ToList();
-
-        var currentLine = $"{GetDisplayName(message.Author)}: {ResolveMentions(message.Content, guild)}";
-
-        // Обрезаем старые сообщения, если суммарно больше лимита (минимум одно остаётся)
-        var totalChars = currentLine.Length;
-        var contextLines = new List<string>();
-
-        for (var i = allLines.Count - 1; i >= 0; i--)
-        {
-            if (totalChars + allLines[i].Length > ContextMaxTotalChars && contextLines.Count > 0)
-            {
-                break;
-            }
-
-            totalChars += allLines[i].Length;
-            contextLines.Insert(0, allLines[i]);
-        }
-
-        contextLines.Add(currentLine);
-
-        var context = string.Join('\n', contextLines);
-        var user = GetDisplayName(message.Author);
+        var context = await BuildContextAsync(message, ContextMessageCount, ContextMaxTotalChars);
+        var user = GetDisplayName(message.Author, guild);
         var badWordsStr = string.Join(", ", badWords);
-        var botName = (message.Channel as SocketGuildChannel)?.Guild.CurrentUser.DisplayName ?? "Bot";
+        var botName = guild?.CurrentUser.DisplayName ?? "Bot";
 
         // Подставляем плейсхолдеры в промпт
         var userMessagePrompt = cfg.MessagePrompt
@@ -456,11 +424,68 @@ public static class MessageHandler
     }
 
     /// <summary>
-    /// Возвращает серверное отображаемое имя (ник) пользователя, либо Username как фоллбэк.
+    /// Возвращает серверное отображаемое имя (ник) пользователя.
+    /// Если автор не IGuildUser (сообщение из REST API), резолвит через гильдию.
     /// </summary>
-    private static string GetDisplayName(IUser user)
+    private static string GetDisplayName(IUser user, IGuild? guild = null)
     {
-        return user is IGuildUser guildUser ? guildUser.DisplayName : user.Username;
+        if (user is IGuildUser guildUser)
+        {
+            return guildUser.DisplayName;
+        }
+
+        if (guild is not null)
+        {
+            var resolved = guild.GetUserAsync(user.Id).GetAwaiter().GetResult();
+
+            if (resolved is not null)
+            {
+                return resolved.DisplayName;
+            }
+        }
+
+        return user.Username;
+    }
+
+    /// <summary>
+    /// Собирает контекст из предыдущих сообщений канала. Всегда от НОВЫХ к СТАРЫМ,
+    /// чтобы при обрезке по лимиту символов оставались самые свежие сообщения.
+    /// </summary>
+    private static async Task<string> BuildContextAsync(SocketUserMessage message, int messageCount, int maxChars)
+    {
+        var guild = (message.Channel as SocketGuildChannel)?.Guild;
+
+        var previousMessages = await message.Channel
+            .GetMessagesAsync(message, Direction.Before, messageCount)
+            .FlattenAsync();
+
+        var cutoff = message.Timestamp.AddHours(-1);
+        var allLines = previousMessages
+            .Reverse()
+            .Where(m => !string.IsNullOrWhiteSpace(m.Content) && m.Timestamp >= cutoff)
+            .Select(m => $"{GetDisplayName(m.Author, guild)}: {ResolveMentions(m.Content, guild)}")
+            .ToList();
+
+        var currentLine = $"{GetDisplayName(message.Author, guild)}: {ResolveMentions(message.Content, guild)}";
+
+        // Собираем от новых к старым, чтобы при обрезке оставались свежие сообщения
+        var totalChars = currentLine.Length;
+        var contextLines = new List<string>();
+
+        for (var i = allLines.Count - 1; i >= 0; i--)
+        {
+            if (totalChars + allLines[i].Length > maxChars && contextLines.Count > 0)
+            {
+                break;
+            }
+
+            totalChars += allLines[i].Length;
+            contextLines.Insert(0, allLines[i]);
+        }
+
+        contextLines.Add(currentLine);
+
+        return string.Join('\n', contextLines);
     }
 
     /// <summary>
@@ -550,31 +575,8 @@ public static class MessageHandler
         var guild = (message.Channel as SocketGuildChannel)?.Guild;
         var botName = guild?.CurrentUser.DisplayName ?? "Bot";
 
-        // Собираем контекст из предыдущих сообщений
-        var previousMessages = await message.Channel
-            .GetMessagesAsync(message, Direction.Before, ChatContextMessageCount)
-            .FlattenAsync();
-
-        var cutoff = message.Timestamp.AddHours(-1);
-        var contextLines = new List<string>();
-        var totalChars = 0;
-
-        foreach (var msg in previousMessages.Reverse().Where(m => !string.IsNullOrWhiteSpace(m.Content) && m.Timestamp >= cutoff))
-        {
-            if (totalChars + msg.Content.Length > ChatContextMaxTotalChars && contextLines.Count > 0)
-            {
-                break;
-            }
-
-            var line = $"{GetDisplayName(msg.Author)}: {ResolveMentions(msg.Content, guild)}";
-            contextLines.Add(line);
-            totalChars += line.Length;
-        }
-
-        contextLines.Add($"{GetDisplayName(message.Author)}: {ResolveMentions(message.Content, guild)}");
-
-        var context = string.Join('\n', contextLines);
-        var user = GetDisplayName(message.Author);
+        var context = await BuildContextAsync(message, ChatContextMessageCount, ChatContextMaxTotalChars);
+        var user = GetDisplayName(message.Author, guild);
 
         var userMessagePrompt = cfg.MessagePrompt
             .Replace("{context}", context)
@@ -638,7 +640,8 @@ public static class MessageHandler
             return false;
         }
 
-        BotLogger.LogAi("AI_CONTINUATION_CHECKER_SETTINGS", "Продолжение диалога в канале {Channel} от {User} (осталось {Remaining})", message.Channel.Name, GetDisplayName(message.Author), remaining - 1);
+        var guild = (message.Channel as SocketGuildChannel)?.Guild;
+        BotLogger.LogAi("AI_CONTINUATION_CHECKER_SETTINGS", "Продолжение диалога в канале {Channel} от {User} (осталось {Remaining})", message.Channel.Name, GetDisplayName(message.Author, guild), remaining - 1);
         await HandleChatAsync(message, startTracking: false);
         return true;
     }
@@ -658,31 +661,8 @@ public static class MessageHandler
         var guild = (message.Channel as SocketGuildChannel)?.Guild;
         var botName = guild?.CurrentUser.DisplayName ?? "Bot";
 
-        // Собираем короткий контекст
-        var previousMessages = await message.Channel
-            .GetMessagesAsync(message, Direction.Before, ContextMessageCount)
-            .FlattenAsync();
-
-        var cutoff = message.Timestamp.AddHours(-1);
-        var contextLines = new List<string>();
-        var totalChars = 0;
-
-        foreach (var msg in previousMessages.Reverse().Where(m => !string.IsNullOrWhiteSpace(m.Content) && m.Timestamp >= cutoff))
-        {
-            if (totalChars + msg.Content.Length > ContextMaxTotalChars && contextLines.Count > 0)
-            {
-                break;
-            }
-
-            var line = $"{GetDisplayName(msg.Author)}: {ResolveMentions(msg.Content, guild)}";
-            contextLines.Add(line);
-            totalChars += line.Length;
-        }
-
-        contextLines.Add($"{GetDisplayName(message.Author)}: {ResolveMentions(message.Content, guild)}");
-        var context = string.Join('\n', contextLines);
-
-        var user = GetDisplayName(message.Author);
+        var context = await BuildContextAsync(message, ContextMessageCount, ContextMaxTotalChars);
+        var user = GetDisplayName(message.Author, guild);
 
         var prompt = cfg.MessagePrompt
             .Replace("{context}", context)
