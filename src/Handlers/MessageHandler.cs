@@ -17,9 +17,9 @@ public static class MessageHandler
     private const int ChatContextMessageCount = 30;
     private const int ChatContextMaxTotalChars = 800;
     private const int MaxHeatLevel = 3;
-    private const int ConversationTrackMessages = 5;
-    private static readonly TimeSpan HeatCooldown = TimeSpan.FromMinutes(5);
-    private static readonly double[] HeatTemperatureBonus = [0, 0, 0.5, 0.5];
+    private const int ConversationTrackMessages = 3;
+    private static readonly TimeSpan HeatCooldown = TimeSpan.FromMinutes(3);
+    private static readonly double[] HeatTemperatureBonus = [0, 0, 0.25, 0.25];
 
     private static readonly ConcurrentDictionary<ulong, UserHeatState> _heatMap = new();
     private static readonly ConcurrentDictionary<ulong, int> _activeConversations = new();

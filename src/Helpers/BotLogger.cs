@@ -173,7 +173,7 @@ public static partial class BotLogger
                 // Discord ограничение — 2000 символов; разбиваем на части
                 foreach (var chunk in SplitMessage(text))
                 {
-                    await thread.SendMessageAsync(chunk);
+                    await thread.SendMessageAsync(chunk, allowedMentions: AllowedMentions.None);
                 }
             }
             catch
