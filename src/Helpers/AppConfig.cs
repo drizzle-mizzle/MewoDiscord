@@ -20,6 +20,7 @@ public static class AppConfig
     public static AiSectionConfig CensorSettings { get; } = new("ANTHROPIC_CENSOR_SETTINGS");
     public static AiSectionConfig SwearsCheckerSettings { get; } = new("ANTHROPIC_SWEARS_CHECKER_SETTINGS");
     public static AiSectionConfig ChatSettings { get; } = new("AI_CHAT_SETTINGS");
+    public static AiSectionConfig ContinuationCheckerSettings { get; } = new("AI_CONTINUATION_CHECKER_SETTINGS");
 
     /// <summary>
     /// Типизированная секция настроек ИИ-провайдера (модели, токены, промпты).

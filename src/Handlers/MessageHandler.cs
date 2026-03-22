@@ -17,10 +17,12 @@ public static class MessageHandler
     private const int ChatContextMessageCount = 15;
     private const int ChatContextMaxTotalChars = 2000;
     private const int MaxHeatLevel = 2;
+    private const int ConversationTrackMessages = 5;
     private static readonly TimeSpan HeatCooldown = TimeSpan.FromMinutes(5);
     private static readonly double[] HeatTemperatureBonus = [0, 0, 0.15, 0.3, 0.5];
 
     private static readonly ConcurrentDictionary<ulong, UserHeatState> _heatMap = new();
+    private static readonly ConcurrentDictionary<ulong, int> _activeConversations = new();
 
     private static string DictionaryPath => Path.Combine(AppConfig.FilesDirectory, "swears.txt");
 
@@ -85,6 +87,12 @@ public static class MessageHandler
         if (IsBotAddressed(userMessage))
         {
             await HandleChatAsync(userMessage);
+            return;
+        }
+
+        // Продолжение диалога: если бот уже общался с этим пользователем
+        if (await TryContinueConversationAsync(userMessage))
+        {
             return;
         }
 
@@ -366,6 +374,7 @@ public static class MessageHandler
         if (!string.IsNullOrEmpty(reply))
         {
             await message.Channel.SendMessageAsync(reply);
+            StartTrackingConversation(userId);
         }
     }
 
@@ -496,7 +505,106 @@ public static class MessageHandler
         if (!string.IsNullOrEmpty(reply))
         {
             await message.Channel.SendMessageAsync(reply, messageReference: new MessageReference(message.Id));
+            StartTrackingConversation(message.Author.Id);
         }
+    }
+
+    /// <summary>
+    /// Начинает (или сбрасывает) отслеживание диалога с пользователем.
+    /// </summary>
+    private static void StartTrackingConversation(ulong userId)
+    {
+        _activeConversations[userId] = ConversationTrackMessages;
+    }
+
+    /// <summary>
+    /// Проверяет, является ли сообщение продолжением активного диалога с ботом.
+    /// Если да — отвечает через чат и возвращает true. Декрементирует счётчик, при 0 — снимает трекинг.
+    /// </summary>
+    private static async Task<bool> TryContinueConversationAsync(SocketUserMessage message)
+    {
+        var userId = message.Author.Id;
+
+        if (!_activeConversations.TryGetValue(userId, out var remaining))
+        {
+            return false;
+        }
+
+        // Декрементируем счётчик
+        if (remaining <= 1)
+        {
+            _activeConversations.TryRemove(userId, out _);
+            BotLogger.Information("Диалог с {User} остыл (лимит сообщений)", GetDisplayName(message.Author));
+            return false;
+        }
+
+        _activeConversations[userId] = remaining - 1;
+
+        // Спрашиваем ИИ, является ли это продолжением диалога
+        var isContinuation = await CheckContinuationWithAiAsync(message);
+
+        if (!isContinuation)
+        {
+            return false;
+        }
+
+        BotLogger.Information("Продолжение диалога от {User} (осталось {Remaining})", GetDisplayName(message.Author), remaining - 1);
+        await HandleChatAsync(message);
+        return true;
+    }
+
+    /// <summary>
+    /// Спрашивает ИИ, является ли сообщение продолжением диалога с ботом.
+    /// </summary>
+    private static async Task<bool> CheckContinuationWithAiAsync(SocketUserMessage message)
+    {
+        var cfg = AppConfig.ContinuationCheckerSettings;
+
+        if (string.IsNullOrEmpty(cfg.SystemPrompt))
+        {
+            return false;
+        }
+
+        var guild = (message.Channel as SocketGuildChannel)?.Guild;
+        var botName = guild?.CurrentUser.DisplayName ?? "Bot";
+
+        // Собираем короткий контекст
+        var previousMessages = await message.Channel
+            .GetMessagesAsync(message, Direction.Before, ContextMessageCount)
+            .FlattenAsync();
+
+        var cutoff = message.Timestamp.AddHours(-1);
+        var contextLines = new List<string>();
+        var totalChars = 0;
+
+        foreach (var msg in previousMessages.Reverse().Where(m => !string.IsNullOrWhiteSpace(m.Content) && m.Timestamp >= cutoff))
+        {
+            if (totalChars + msg.Content.Length > ContextMaxTotalChars && contextLines.Count > 0)
+            {
+                break;
+            }
+
+            var line = $"{GetDisplayName(msg.Author)}: {msg.Content}";
+            contextLines.Add(line);
+            totalChars += line.Length;
+        }
+
+        contextLines.Add($"{GetDisplayName(message.Author)}: {message.Content}");
+        var context = string.Join('\n', contextLines);
+
+        var prompt = cfg.MessagePrompt
+            .Replace("{context}", context)
+            .Replace("{user}", GetDisplayName(message.Author))
+            .Replace("{botName}", botName);
+
+        var reply = await AiClient.CompleteAsync(cfg, userMessage: prompt, systemPrompt: cfg.SystemPrompt, maxTokens: cfg.MaxTokens, temperature: cfg.Temperature);
+
+        if (string.IsNullOrWhiteSpace(reply))
+        {
+            return false;
+        }
+
+        return reply.Trim().StartsWith("да", StringComparison.OrdinalIgnoreCase);
     }
 
     private class UserHeatState
