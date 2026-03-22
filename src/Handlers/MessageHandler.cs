@@ -559,9 +559,9 @@ public static class MessageHandler
 
     /// <summary>
     /// Обрабатывает обращение к боту: собирает контекст и генерирует ответ через ИИ.
-    /// startTracking: true для новых триггеров (пинг/реплай), false для продолжений.
+    /// После ответа всегда сбрасывает счётчик отслеживания на 5.
     /// </summary>
-    private static async Task HandleChatAsync(SocketUserMessage message, bool startTracking = true)
+    private static async Task HandleChatAsync(SocketUserMessage message)
     {
         var cfg = AppConfig.ChatSettings;
 
@@ -591,11 +591,7 @@ public static class MessageHandler
         if (!string.IsNullOrEmpty(reply))
         {
             await message.Channel.SendMessageAsync(reply, messageReference: new MessageReference(message.Id));
-
-            if (startTracking)
-            {
-                StartTrackingConversation(message.Channel.Id);
-            }
+            StartTrackingConversation(message.Channel.Id);
         }
     }
 
@@ -640,7 +636,7 @@ public static class MessageHandler
 
         var guild = (message.Channel as SocketGuildChannel)?.Guild;
         BotLogger.LogAi("AI_CONTINUATION_CHECKER_SETTINGS", "Продолжение диалога в канале {Channel} от {User} (осталось {Remaining})", message.Channel.Name, GetDisplayName(message.Author, guild), remaining - 1);
-        await HandleChatAsync(message, startTracking: false);
+        await HandleChatAsync(message);
         return true;
     }
 
