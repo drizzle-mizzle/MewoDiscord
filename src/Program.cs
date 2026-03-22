@@ -36,7 +36,8 @@ internal class Program
         // Создание клиента Discord
         var config = new DiscordSocketConfig
         {
-            GatewayIntents = GatewayIntents.AllUnprivileged | GatewayIntents.MessageContent
+            GatewayIntents = GatewayIntents.AllUnprivileged | GatewayIntents.MessageContent,
+            MessageCacheSize = 100
         };
 
         _client = new DiscordSocketClient(config);

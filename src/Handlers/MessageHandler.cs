@@ -77,35 +77,48 @@ public static class MessageHandler
             return;
         }
 
-        // Верификация — проверяем до цензуры
+        // Верификация — проверяем до всего
         if (await VerificationHandler.TryHandleAsync(userMessage))
         {
             return;
         }
 
-        // Чат-бот: реагируем на пинг и ответы на сообщения бота
+        // 1. Пинг / реплай бота → AI_CHAT (без ИИ-проверок)
         if (IsBotAddressed(userMessage))
         {
             await HandleChatAsync(userMessage);
             return;
         }
 
-        // Продолжение диалога: если бот уже общался с этим пользователем
+        // 2. Быстрая проверка на мат (BogaNet + словарь, без ИИ) → AI_CENSOR
+        if (IsCensorEnabled && await TryHandleProfanityFastAsync(userMessage))
+        {
+            return;
+        }
+
+        // 3. Continuation (ИИ-проверка, но пропускается если 5+ сообщений) → AI_CHAT
         if (await TryContinueConversationAsync(userMessage))
         {
             return;
         }
 
-        if (!IsCensorEnabled)
+        // 4. Проверка на мат с ИИ (регулярка + верификация) → AI_CENSOR
+        if (IsCensorEnabled && await TryHandleProfanityWithAiAsync(userMessage))
         {
             return;
         }
+    }
 
+    /// <summary>
+    /// Быстрая проверка на мат (BogaNet + словарь). Без обращений к ИИ.
+    /// </summary>
+    private static async Task<bool> TryHandleProfanityFastAsync(SocketUserMessage userMessage)
+    {
         var text = NormalizeForSwearCheck(userMessage.Content);
 
         if (string.IsNullOrWhiteSpace(text))
         {
-            return;
+            return false;
         }
 
         // Поиск мата через BogaNet
@@ -122,29 +135,42 @@ public static class MessageHandler
             }
         }
 
-        if (badWords.Count > 0)
+        if (badWords.Count == 0)
         {
-            var originalBadWords = FindOriginalWords(userMessage.Content, badWords);
-            BotLogger.LogAi("AI_CENSOR_SETTINGS", "Обнаружен мат от {User}: {BadWords}", message.Author.Username, string.Join(", ", originalBadWords));
-            await HandleProfanityAsync(userMessage, originalBadWords);
-
-            return;
+            return false;
         }
 
-        // Фоллбэк: регулярка + ИИ-верификация
-        await CheckWithRegexAsync(text, userMessage);
+        var originalBadWords = FindOriginalWords(userMessage.Content, badWords);
+        BotLogger.LogAi("AI_CENSOR_SETTINGS", "Обнаружен мат от {User}: {BadWords}", userMessage.Author.Username, string.Join(", ", originalBadWords));
+        await HandleProfanityAsync(userMessage, originalBadWords);
+        return true;
+    }
+
+    /// <summary>
+    /// Проверка на мат через регулярку + ИИ-верификацию. Вызывается после быстрой проверки и continuation.
+    /// </summary>
+    private static async Task<bool> TryHandleProfanityWithAiAsync(SocketUserMessage userMessage)
+    {
+        var text = NormalizeForSwearCheck(userMessage.Content);
+
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        return await CheckWithRegexAsync(text, userMessage);
     }
 
     /// <summary>
     /// Проверяет текст регуляркой и, при срабатывании, верифицирует через ИИ.
     /// </summary>
-    private static async Task CheckWithRegexAsync(string text, SocketUserMessage message)
+    private static async Task<bool> CheckWithRegexAsync(string text, SocketUserMessage message)
     {
         var foundWords = FindSwearsByRegex(text);
 
         if (foundWords.Count == 0)
         {
-            return;
+            return false;
         }
 
         var originalWords = FindOriginalWords(message.Content, foundWords);
@@ -155,12 +181,13 @@ public static class MessageHandler
         if (!confirmed)
         {
             BotLogger.LogAi("AI_SWEARS_CHECKER_SETTINGS", "ИИ не подтвердил мат от {User}", message.Author.Username);
-            return;
+            return false;
         }
 
         BotLogger.LogAi("AI_SWEARS_CHECKER_SETTINGS", "ИИ подтвердил мат от {User}: {Words}", message.Author.Username, string.Join(", ", originalWords));
         AddToDictionary(foundWords);
         await HandleProfanityAsync(message, originalWords);
+        return true;
     }
 
     /// <summary>

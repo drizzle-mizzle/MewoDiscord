@@ -70,12 +70,12 @@ public static partial class BotLogger
                 .WithCurrentTimestamp()
                 .Build();
 
-            var startMessage = await channel.SendMessageAsync(embed: startEmbed);
+            await channel.SendMessageAsync(embed: startEmbed);
 
-            // Тред для слеш-команд
+            // Тред для слеш-команд (без привязки к сообщению — Discord позволяет только 1 тред на сообщение)
             var cmdThread = await channel.CreateThreadAsync(
                 "Слеш-команды",
-                message: startMessage);
+                ThreadType.PublicThread);
 
             _threads[CommandsThreadKey] = cmdThread;
 
@@ -84,7 +84,7 @@ public static partial class BotLogger
             {
                 var thread = await channel.CreateThreadAsync(
                     displayName,
-                    message: startMessage);
+                    ThreadType.PublicThread);
 
                 _threads[key] = thread;
 
