@@ -23,6 +23,7 @@ public static class MessageHandler
 
     private static readonly ConcurrentDictionary<ulong, UserHeatState> _heatMap = new();
     private static readonly ConcurrentDictionary<ulong, int> _activeConversations = new();
+    private static readonly ConcurrentDictionary<ulong, SemaphoreSlim> _channelLocks = new();
 
     private static string DictionaryPath => Path.Combine(AppConfig.FilesDirectory, "swears.txt");
 
@@ -77,6 +78,23 @@ public static class MessageHandler
             return;
         }
 
+        // Последовательная обработка сообщений в канале — чтобы ответ бота
+        // успел появиться в контексте до обработки следующего сообщения.
+        var channelLock = _channelLocks.GetOrAdd(message.Channel.Id, _ => new SemaphoreSlim(1, 1));
+        await channelLock.WaitAsync();
+
+        try
+        {
+            await ProcessMessageAsync(userMessage);
+        }
+        finally
+        {
+            channelLock.Release();
+        }
+    }
+
+    private static async Task ProcessMessageAsync(SocketUserMessage userMessage)
+    {
         // Верификация — проверяем до всего
         if (await VerificationHandler.TryHandleAsync(userMessage))
         {
@@ -518,8 +536,9 @@ public static class MessageHandler
 
     /// <summary>
     /// Обрабатывает обращение к боту: собирает контекст и генерирует ответ через ИИ.
+    /// startTracking: true для новых триггеров (пинг/реплай), false для продолжений.
     /// </summary>
-    private static async Task HandleChatAsync(SocketUserMessage message)
+    private static async Task HandleChatAsync(SocketUserMessage message, bool startTracking = true)
     {
         var cfg = AppConfig.ChatSettings;
 
@@ -572,7 +591,11 @@ public static class MessageHandler
         if (!string.IsNullOrEmpty(reply))
         {
             await message.Channel.SendMessageAsync(reply, messageReference: new MessageReference(message.Id));
-            StartTrackingConversation(message.Channel.Id);
+
+            if (startTracking)
+            {
+                StartTrackingConversation(message.Channel.Id);
+            }
         }
     }
 
@@ -616,7 +639,7 @@ public static class MessageHandler
         }
 
         BotLogger.LogAi("AI_CONTINUATION_CHECKER_SETTINGS", "Продолжение диалога в канале {Channel} от {User} (осталось {Remaining})", message.Channel.Name, GetDisplayName(message.Author), remaining - 1);
-        await HandleChatAsync(message);
+        await HandleChatAsync(message, startTracking: false);
         return true;
     }
 
