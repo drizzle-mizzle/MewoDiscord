@@ -170,13 +170,11 @@ public static partial class BotLogger
                 var timestamp = GetLocalNow().ToString("HH:mm:ss");
                 var text = $"`[{timestamp}]` {message}";
 
-                // Discord ограничение — 2000 символов
-                if (text.Length > 2000)
+                // Discord ограничение — 2000 символов; разбиваем на части
+                foreach (var chunk in SplitMessage(text))
                 {
-                    text = text[..1997] + "...";
+                    await thread.SendMessageAsync(chunk);
                 }
-
-                await thread.SendMessageAsync(text);
             }
             catch
             {
@@ -186,6 +184,42 @@ public static partial class BotLogger
     }
 
     #endregion
+
+    /// <summary>
+    /// Разбивает сообщение на части по 2000 символов, стараясь резать по переносу строки.
+    /// </summary>
+    private static List<string> SplitMessage(string text, int maxLength = 2000)
+    {
+        if (text.Length <= maxLength)
+        {
+            return [text];
+        }
+
+        var parts = new List<string>();
+
+        while (text.Length > 0)
+        {
+            if (text.Length <= maxLength)
+            {
+                parts.Add(text);
+                break;
+            }
+
+            // Ищем последний перенос строки в пределах лимита
+            var cutAt = text.LastIndexOf('\n', maxLength - 1);
+
+            if (cutAt <= 0)
+            {
+                // Нет переноса — режем по лимиту
+                cutAt = maxLength;
+            }
+
+            parts.Add(text[..cutAt]);
+            text = text[cutAt..].TrimStart('\n');
+        }
+
+        return parts;
+    }
 
     /// <summary>
     /// Заменяет {Named} плейсхолдеры Serilog аргументами по порядку.

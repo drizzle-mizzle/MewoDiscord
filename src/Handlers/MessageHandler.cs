@@ -12,10 +12,10 @@ namespace MewoDiscord.Handlers;
 
 public static class MessageHandler
 {
-    private const int ContextMessageCount = 20;
-    private const int ContextMaxTotalChars = 500;
-    private const int ChatContextMessageCount = 15;
-    private const int ChatContextMaxTotalChars = 2000;
+    private const int ContextMessageCount = 30;
+    private const int ContextMaxTotalChars = 800;
+    private const int ChatContextMessageCount = 30;
+    private const int ChatContextMaxTotalChars = 800;
     private const int MaxHeatLevel = 3;
     private const int ConversationTrackMessages = 5;
     private static readonly TimeSpan HeatCooldown = TimeSpan.FromMinutes(5);
@@ -448,8 +448,9 @@ public static class MessageHandler
     }
 
     /// <summary>
-    /// Собирает контекст из предыдущих сообщений канала. Всегда от НОВЫХ к СТАРЫМ,
-    /// чтобы при обрезке по лимиту символов оставались самые свежие сообщения.
+    /// Собирает контекст из предыдущих сообщений канала.
+    /// Берёт до messageCount сообщений, добавляет текущее, затем удаляет самые старые (с начала)
+    /// пока суммарная длина превышает maxChars. Минимум 2 сообщения остаются всегда (даже если > maxChars).
     /// </summary>
     private static async Task<string> BuildContextAsync(SocketUserMessage message, int messageCount, int maxChars)
     {
@@ -460,30 +461,27 @@ public static class MessageHandler
             .FlattenAsync();
 
         var cutoff = message.Timestamp.AddHours(-1);
-        var allLines = previousMessages
+        var contextLines = previousMessages
             .Reverse()
             .Where(m => !string.IsNullOrWhiteSpace(m.Content) && m.Timestamp >= cutoff)
             .Select(m => $"{GetDisplayName(m.Author, guild)}: {ResolveMentions(m.Content, guild)}")
             .ToList();
 
-        var currentLine = $"{GetDisplayName(message.Author, guild)}: {ResolveMentions(message.Content, guild)}";
+        contextLines.Add($"{GetDisplayName(message.Author, guild)}: {ResolveMentions(message.Content, guild)}");
 
-        // Собираем от новых к старым, чтобы при обрезке оставались свежие сообщения
-        var totalChars = currentLine.Length;
-        var contextLines = new List<string>();
-
-        for (var i = allLines.Count - 1; i >= 0; i--)
+        // Удаляем самые старые сообщения с начала, пока не влезаем в лимит.
+        // Минимум 2 сообщения остаются всегда.
+        while (contextLines.Count > 2)
         {
-            if (totalChars + allLines[i].Length > maxChars && contextLines.Count > 0)
+            var totalChars = contextLines.Sum(l => l.Length);
+
+            if (totalChars <= maxChars)
             {
                 break;
             }
 
-            totalChars += allLines[i].Length;
-            contextLines.Insert(0, allLines[i]);
+            contextLines.RemoveAt(0);
         }
-
-        contextLines.Add(currentLine);
 
         return string.Join('\n', contextLines);
     }
