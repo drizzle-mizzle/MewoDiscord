@@ -374,7 +374,7 @@ public static class MessageHandler
         if (!string.IsNullOrEmpty(reply))
         {
             await message.Channel.SendMessageAsync(reply);
-            StartTrackingConversation(userId);
+            StartTrackingConversation(message.Channel.Id);
         }
     }
 
@@ -505,27 +505,27 @@ public static class MessageHandler
         if (!string.IsNullOrEmpty(reply))
         {
             await message.Channel.SendMessageAsync(reply, messageReference: new MessageReference(message.Id));
-            StartTrackingConversation(message.Author.Id);
+            StartTrackingConversation(message.Channel.Id);
         }
     }
 
     /// <summary>
-    /// Начинает (или сбрасывает) отслеживание диалога с пользователем.
+    /// Начинает (или сбрасывает) отслеживание диалога в канале.
     /// </summary>
-    private static void StartTrackingConversation(ulong userId)
+    private static void StartTrackingConversation(ulong channelId)
     {
-        _activeConversations[userId] = ConversationTrackMessages;
+        _activeConversations[channelId] = ConversationTrackMessages;
     }
 
     /// <summary>
-    /// Проверяет, является ли сообщение продолжением активного диалога с ботом.
+    /// Проверяет, является ли сообщение продолжением активного диалога с ботом в канале.
     /// Если да — отвечает через чат и возвращает true. Декрементирует счётчик, при 0 — снимает трекинг.
     /// </summary>
     private static async Task<bool> TryContinueConversationAsync(SocketUserMessage message)
     {
-        var userId = message.Author.Id;
+        var channelId = message.Channel.Id;
 
-        if (!_activeConversations.TryGetValue(userId, out var remaining))
+        if (!_activeConversations.TryGetValue(channelId, out var remaining))
         {
             return false;
         }
@@ -533,12 +533,12 @@ public static class MessageHandler
         // Декрементируем счётчик
         if (remaining <= 1)
         {
-            _activeConversations.TryRemove(userId, out _);
-            BotLogger.Information("Диалог с {User} остыл (лимит сообщений)", GetDisplayName(message.Author));
+            _activeConversations.TryRemove(channelId, out _);
+            BotLogger.Information("Диалог в канале {Channel} остыл (лимит сообщений)", message.Channel.Name);
             return false;
         }
 
-        _activeConversations[userId] = remaining - 1;
+        _activeConversations[channelId] = remaining - 1;
 
         // Спрашиваем ИИ, является ли это продолжением диалога
         var isContinuation = await CheckContinuationWithAiAsync(message);
@@ -548,7 +548,7 @@ public static class MessageHandler
             return false;
         }
 
-        BotLogger.Information("Продолжение диалога от {User} (осталось {Remaining})", GetDisplayName(message.Author), remaining - 1);
+        BotLogger.Information("Продолжение диалога в канале {Channel} от {User} (осталось {Remaining})", message.Channel.Name, GetDisplayName(message.Author), remaining - 1);
         await HandleChatAsync(message);
         return true;
     }
