@@ -44,6 +44,12 @@ public static class BotMessages
     public static string VoiceUserStoppedStream(string user, string channel, string timer) =>
         Format(nameof(VoiceUserStoppedStream), ("{user}", user), ("{channel}", channel), ("{timer}", timer));
 
+    public static string VoiceChannelRenamed(string oldName, string newName) =>
+        Format(nameof(VoiceChannelRenamed), ("{oldName}", oldName), ("{newName}", newName));
+
+    public static string ReinstallDone(string global, string guild, string registered) =>
+        Format(nameof(ReinstallDone), ("{global}", global), ("{guild}", guild), ("{registered}", registered));
+
     public static string PurgeDone(string count) =>
         Format(nameof(PurgeDone), ("{count}", count));
 
@@ -61,6 +67,12 @@ public static class BotMessages
 
     public static string SetTemperature(string value) =>
         Format(nameof(SetTemperature), ("{value}", value));
+
+    public static string TelegramFooter() =>
+        Format(nameof(TelegramFooter));
+
+    public static string TelegramTooBig(string size, string url) =>
+        Format(nameof(TelegramTooBig), ("{size}", size), ("{url}", url));
 
     #region Internals
 

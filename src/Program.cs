@@ -2,6 +2,7 @@ using Discord;
 using Discord.Interactions;
 using Discord.WebSocket;
 
+using MewoDiscord.Commands;
 using MewoDiscord.Handlers;
 using MewoDiscord.Helpers;
 
@@ -15,6 +16,12 @@ internal class Program
 {
     private static DiscordSocketClient? _client;
     private static InteractionService? _interactions;
+    private static bool _channelNamesRestored;
+
+    /// <summary>
+    /// Модули команд, управляющих ИИ-функциями. Регистрируются только при UseAi = true.
+    /// </summary>
+    private static readonly Type[] AiCommandModules = [typeof(SetCommands), typeof(ToggleCommands)];
 
     private static async Task Main()
     {
@@ -44,11 +51,30 @@ internal class Program
         _interactions = new InteractionService(_client.Rest);
         BotLogger.SetClient(_client);
 
+        // БД исходных имён голосовых каналов, переименованных ботом
+        ChannelNameStore.Load();
+
         // Инициализация обработчиков
-        MessageHandler.Initialize();
+        if (AppConfig.UseAi)
+        {
+            MessageHandler.Initialize();
+        }
+        else
+        {
+            BotLogger.Information("ИИ отключён (UseAi: false): ИИ-обработчики и команды /set, /toggle не активны");
+        }
 
         // Регистрация модулей команд
         await _interactions.AddModulesAsync(typeof(Program).Assembly, services: null);
+
+        // При выключенном ИИ связанные команды не попадают в Discord
+        if (!AppConfig.UseAi)
+        {
+            foreach (var module in AiCommandModules)
+            {
+                await _interactions.RemoveModuleAsync(module);
+            }
+        }
 
         // Обработчики событий
         _client.Log += OnLog;
@@ -83,11 +109,48 @@ internal class Program
         await Log.CloseAndFlushAsync();
     }
 
+    /// <summary>
+    /// Принудительно переустанавливает слеш-команды: сносит все глобальные и серверные,
+    /// включая устаревшие, которых уже нет в коде, и регистрирует текущий набор модулей.
+    /// Набор учитывает UseAi — снятые при запуске ИИ-команды обратно не вернутся.
+    /// </summary>
+    internal static async Task<(int RemovedGlobal, int RemovedGuild, int Registered)> ReinstallCommandsAsync(SocketGuild? guild)
+    {
+        var existingGlobal = await _client!.Rest.GetGlobalApplicationCommands();
+        await _client.Rest.DeleteAllGlobalCommandsAsync();
+
+        var removedGuild = 0;
+
+        // Серверные команды живут отдельно от глобальных: их bulk-регистрация не трогает
+        if (guild != null)
+        {
+            var guildCommands = await guild.GetApplicationCommandsAsync();
+            removedGuild = guildCommands.Count;
+
+            if (removedGuild > 0)
+            {
+                await guild.DeleteApplicationCommandsAsync();
+            }
+        }
+
+        var registered = await _interactions!.RegisterCommandsGloballyAsync();
+
+        return (existingGlobal.Count, removedGuild, registered.Count);
+    }
+
     private static async Task OnReady()
     {
         await _interactions!.RegisterCommandsGloballyAsync();
         BotLogger.Information("Слеш-команды зарегистрированы");
         await BotLogger.InitializeSessionAsync();
+
+        // Только при первом Ready: событие повторяется на каждом переподключении gateway,
+        // а сверка на живом боте вернула бы родное имя каналу, где человек сидит один прямо сейчас
+        if (!_channelNamesRestored)
+        {
+            _channelNamesRestored = true;
+            await VoiceStatusHandler.RestoreRenamedChannelsAsync(_client!);
+        }
     }
 
     private static async Task OnInteractionCreated(SocketInteraction interaction)
