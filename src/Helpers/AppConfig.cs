@@ -16,6 +16,21 @@ public static class AppConfig
     public static ulong VerificationRole => GetUlong("COMMON", nameof(VerificationRole));
     public static string LocalTimeZone => Get("COMMON", nameof(LocalTimeZone), "Europe/Kiev");
 
+    /// <summary>
+    /// Прокси для запросов к Telegram (socks5://хост:порт или http://хост:порт).
+    /// Нужен там, где Telegram заблокирован провайдером. Пусто — идём напрямую.
+    /// Читается один раз при создании HttpClient, горячая перезагрузка его не подхватывает.
+    /// </summary>
+    public static string TelegramProxy => Get("COMMON", nameof(TelegramProxy));
+
+    /// <summary>
+    /// Включены ли ИИ-функции (чат, цензор мата, проверки через OpenRouter).
+    /// В отличие от остальных настроек фиксируется при запуске: горячая перезагрузка
+    /// config.ini его не меняет, иначе обработчики разошлись бы с набором
+    /// зарегистрированных в Discord команд.
+    /// </summary>
+    public static bool UseAi { get; private set; }
+
     public static AiSectionConfig CensorSettings { get; } = new("AI_CENSOR_SETTINGS");
     public static AiSectionConfig SwearsCheckerSettings { get; } = new("AI_SWEARS_CHECKER_SETTINGS");
     public static AiSectionConfig ChatSettings { get; } = new("AI_CHAT_SETTINGS");
@@ -46,12 +61,20 @@ public static class AppConfig
     /// </summary>
     internal static string FilesDirectory { get; set; } = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Files");
 
+    /// <summary>
+    /// Директория изменяемого состояния бота (БД исходных имён каналов).
+    /// Отдельно от Files: в Docker та лежит внутри образа и теряется при пересборке,
+    /// а состояние должно переживать перезапуск. Можно переопределить из тестов.
+    /// </summary>
+    internal static string StateDirectory { get; set; } = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "state");
+
     private static string ConfigPath => Path.Combine(FilesDirectory, "config.ini");
     private static volatile Dictionary<string, Dictionary<string, string>> _sections = new();
 
     static AppConfig()
     {
         Reload();
+        UseAi = GetBool("COMMON", nameof(UseAi), true);
 
         try
         {
@@ -82,6 +105,9 @@ public static class AppConfig
 
     public static ulong GetUlong(string section, string key, ulong defaultValue = 0) =>
         ulong.TryParse(Get(section, key), out var result) ? result : defaultValue;
+
+    public static bool GetBool(string section, string key, bool defaultValue = false) =>
+        bool.TryParse(Get(section, key), out var result) ? result : defaultValue;
 
     public static double GetDouble(string section, string key, double defaultValue = 0) =>
         double.TryParse(Get(section, key), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var result) ? result : defaultValue;

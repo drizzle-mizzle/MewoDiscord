@@ -102,6 +102,15 @@ public static class MessageHandler
             return;
         }
 
+        // Медиа из Telegram: работает независимо от ИИ и не потребляет сообщение
+        TelegramMediaHandler.HandleInBackground(userMessage);
+
+        // Всё, что ниже, — ИИ-функции
+        if (!AppConfig.UseAi)
+        {
+            return;
+        }
+
         // 1. Пинг / реплай бота → AI_CHAT (без ИИ-проверок)
         if (IsBotAddressed(userMessage))
         {
@@ -115,7 +124,7 @@ public static class MessageHandler
             return;
         }
 
-        // 3. Continuation (ИИ-проверка, но пропускается если 5+ сообщений) → AI_CHAT
+        // 3. Continuation (ИИ-проверка, пока канал отслеживается после ответа бота) → AI_CHAT
         if (await TryContinueConversationAsync(userMessage))
         {
             return;
@@ -397,8 +406,8 @@ public static class MessageHandler
 
     /// <summary>
     /// Возвращает текущий уровень накала для пользователя и обновляет состояние.
-    /// Если с последнего нарушения прошло больше 5 минут — сброс на 1.
-    /// Иначе — уровень повышается (макс 3). Бонус температуры: 1→+0, 2→+0.5, 3→+1.0.
+    /// Если с последнего нарушения прошло больше HeatCooldown — сброс на 1.
+    /// Иначе — уровень повышается (макс MaxHeatLevel), бонус температуры берётся из HeatTemperatureBonus.
     /// </summary>
     private static int GetAndUpdateHeatLevel(ulong userId)
     {
@@ -570,7 +579,7 @@ public static class MessageHandler
 
     /// <summary>
     /// Обрабатывает обращение к боту: собирает контекст и генерирует ответ через ИИ.
-    /// После ответа всегда сбрасывает счётчик отслеживания на 5.
+    /// После ответа всегда сбрасывает счётчик отслеживания на ConversationTrackMessages.
     /// </summary>
     private static async Task HandleChatAsync(SocketUserMessage message)
     {

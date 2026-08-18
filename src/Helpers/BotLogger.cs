@@ -8,7 +8,7 @@ namespace MewoDiscord.Helpers;
 
 /// <summary>
 /// Логгер-обёртка: пишет в Serilog и отправляет сообщения в Discord-треды.
-/// При старте создаёт тред для слеш-команд и по треду на каждую ИИ-конфигурацию.
+/// При старте создаёт тред для слеш-команд и, если ИИ включён, по треду на каждую ИИ-конфигурацию.
 /// </summary>
 public static partial class BotLogger
 {
@@ -63,9 +63,11 @@ public static partial class BotLogger
         try
         {
             // Стартовое сообщение
+            var aiStatus = AppConfig.UseAi ? "включён ✅" : "выключен ❌";
+
             var startEmbed = new EmbedBuilder()
                 .WithTitle("Бот запущен")
-                .WithDescription($"Сессия: {GetLocalNow():yyyy-MM-dd HH:mm:ss}")
+                .WithDescription($"Сессия: {GetLocalNow():yyyy-MM-dd HH:mm:ss}\nИИ: {aiStatus}")
                 .WithColor(Color.Green)
                 .WithCurrentTimestamp()
                 .Build();
@@ -79,23 +81,26 @@ public static partial class BotLogger
 
             _threads[CommandsThreadKey] = cmdThread;
 
-            // Треды для каждой AI-конфигурации
-            foreach (var (key, displayName, getConfig) in AiSections)
+            // Треды для каждой AI-конфигурации — только при включённом ИИ
+            if (AppConfig.UseAi)
             {
-                var thread = await channel.CreateThreadAsync(
-                    displayName,
-                    ThreadType.PublicThread);
+                foreach (var (key, displayName, getConfig) in AiSections)
+                {
+                    var thread = await channel.CreateThreadAsync(
+                        displayName,
+                        ThreadType.PublicThread);
 
-                _threads[key] = thread;
+                    _threads[key] = thread;
 
-                // Первое сообщение — текущая конфигурация
-                var cfg = getConfig();
-                var configText = $"⚙️ **Конфигурация {key}**\n" +
-                                 $"Модель: `{cfg.Model}`\n" +
-                                 $"Температура: `{cfg.Temperature}`\n" +
-                                 $"MaxTokens: `{cfg.MaxTokens}`";
+                    // Первое сообщение — текущая конфигурация
+                    var cfg = getConfig();
+                    var configText = $"⚙️ **Конфигурация {key}**\n" +
+                                     $"Модель: `{cfg.Model}`\n" +
+                                     $"Температура: `{cfg.Temperature}`\n" +
+                                     $"MaxTokens: `{cfg.MaxTokens}`";
 
-                await thread.SendMessageAsync(configText);
+                    await thread.SendMessageAsync(configText);
+                }
             }
 
             Log.Information("Сессия логирования инициализирована: {ThreadCount} тредов", _threads.Count);

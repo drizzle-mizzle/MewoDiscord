@@ -6,6 +6,8 @@ services:
     volumes:
       - ./src/Files/config.ini:/app/Files/config.ini:ro
       - bot-logs:/app/logs
+      - bot-state:/app/state
 
 volumes:
   bot-logs:
+  bot-state:

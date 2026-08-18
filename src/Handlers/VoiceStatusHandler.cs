@@ -56,6 +56,9 @@ public static class VoiceStatusHandler
     {
         var name = Mention(user);
 
+        // Только сигнал: вотчер работает в своём цикле, журнал его не ждёт
+        ChannelRenameWatcher.NotifyChannelChanged(channel);
+
         // Первый пользователь — создаём сессию
         if (channel.ConnectedUsers.Count == 1)
         {
@@ -109,6 +112,9 @@ public static class VoiceStatusHandler
 
     private static async Task HandleLeave(SocketUser user, SocketVoiceChannel channel)
     {
+        // Только сигнал: вотчер работает в своём цикле, журнал его не ждёт
+        ChannelRenameWatcher.NotifyChannelChanged(channel);
+
         var target = GetTarget(channel.Id);
 
         if (target == null)
@@ -188,7 +194,25 @@ public static class VoiceStatusHandler
         }
     }
 
-    private static bool IsPrivateChannel(SocketVoiceChannel channel)
+    /// <summary>
+    /// Пишет о смене имени в журнал сессии канала, если он открыт. Вызывается вотчером имён;
+    /// если сессия уже закрыта (или ещё не открыта), сообщение просто не отправляется.
+    /// </summary>
+    internal static async Task NotifyChannelRenamedAsync(ulong channelId, string oldName, string newName)
+    {
+        var target = GetTarget(channelId);
+
+        if (target == null)
+        {
+            return;
+        }
+
+        await target.SendMessageAsync(
+            BotMessages.VoiceChannelRenamed(oldName, newName),
+            allowedMentions: NoMentions);
+    }
+
+    internal static bool IsPrivateChannel(SocketVoiceChannel channel)
     {
         var overwrite = channel.GetPermissionOverwrite(channel.Guild.EveryoneRole);
         return overwrite?.ViewChannel == PermValue.Deny;
