@@ -69,11 +69,11 @@ messages were skipped for that reason.
 
 ```bash
 cd src
-dotnet test --filter "FullyQualifiedName~Regex_|FullyQualifiedName~Store_|FullyQualifiedName~Telegram_"
+dotnet test --filter "FullyQualifiedName~Regex_|FullyQualifiedName~Store_|FullyQualifiedName~Telegram_|FullyQualifiedName~Watcher_"
 ```
 
-The `Regex_*` (profanity filter), `Store_*` (channel-name database) and `Telegram_*` (widget parsing and
-link detection) tests are self-contained and need no network. The `АИ_*` tests call OpenRouter for real and
+The `Regex_*` (profanity filter), `Store_*` (channel-name database), `Telegram_*` (widget parsing and
+link detection) and `Watcher_*` (channel rename decisions) tests are self-contained and need no network. The `АИ_*` tests call OpenRouter for real and
 need a working `OpenRouterApiKey`; run them only when you want to check the AI verification step.
 
 ## Docker

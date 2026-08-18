@@ -144,12 +144,12 @@ internal class Program
         BotLogger.Information("Слеш-команды зарегистрированы");
         await BotLogger.InitializeSessionAsync();
 
-        // Только при первом Ready: событие повторяется на каждом переподключении gateway,
-        // а сверка на живом боте вернула бы родное имя каналу, где человек сидит один прямо сейчас
+        // Только при первом Ready: событие повторяется на каждом переподключении gateway.
+        // Сверка лишь будит вотчеры — те сами решают по актуальному составу каналов
         if (!_channelNamesRestored)
         {
             _channelNamesRestored = true;
-            await VoiceStatusHandler.RestoreRenamedChannelsAsync(_client!);
+            ChannelRenameWatcher.RestoreOnStartup(_client!);
         }
     }
 
