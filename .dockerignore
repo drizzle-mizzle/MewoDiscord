@@ -8,3 +8,4 @@
 **/.idea
 *.md
 src/Files/config.ini
+cliproxy/

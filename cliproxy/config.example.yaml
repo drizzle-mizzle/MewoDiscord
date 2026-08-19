@@ -1,0 +1,13 @@
+# Конфиг CLIProxyAPI (sidecar-прокси к подписке ChatGPT Plus).
+# Скопировать в cliproxy/config.yaml и вписать свой ключ (тот же, что ChatGptProxyApiKey в config.ini).
+port: 8317
+auth-dir: "~/.cli-proxy-api"
+api-keys:
+  - "CHATGPT_PROXY_API_KEY"
+remote-management:
+  allow-remote: false
+  secret-key: ""
+
+# Management API (нужен боту для /chatgpt login) включается переменной MANAGEMENT_PASSWORD
+# из cliproxy/management.env — см. management.example.env. Ключ remote-management.secret-key
+# здесь не заполнять: в yaml ожидается bcrypt-хэш, а не пароль.

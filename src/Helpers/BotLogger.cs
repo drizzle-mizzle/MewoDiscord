@@ -14,6 +14,11 @@ public static partial class BotLogger
 {
     private const string CommandsThreadKey = "commands";
 
+    /// <summary>
+    /// Ключ треда ChatGPT-части (чат и генерация изображений через CLIProxyAPI).
+    /// </summary>
+    internal const string ChatGptThreadKey = "CHATGPT";
+
     private static DiscordSocketClient? _client;
     private static ulong _channelId;
 
@@ -64,10 +69,11 @@ public static partial class BotLogger
         {
             // Стартовое сообщение
             var aiStatus = AppConfig.UseAi ? "включён ✅" : "выключен ❌";
+            var chatGptStatus = AppConfig.UseChatGpt ? "включён ✅" : "выключен ❌";
 
             var startEmbed = new EmbedBuilder()
                 .WithTitle("Бот запущен")
-                .WithDescription($"Сессия: {GetLocalNow():yyyy-MM-dd HH:mm:ss}\nИИ: {aiStatus}")
+                .WithDescription($"Сессия: {GetLocalNow():yyyy-MM-dd HH:mm:ss}\nИИ: {aiStatus}\nChatGPT: {chatGptStatus}")
                 .WithColor(Color.Green)
                 .WithCurrentTimestamp()
                 .Build();
@@ -101,6 +107,25 @@ public static partial class BotLogger
 
                     await thread.SendMessageAsync(configText);
                 }
+            }
+
+            // Тред ChatGPT-части — независим от UseAi
+            if (AppConfig.UseChatGpt)
+            {
+                var thread = await channel.CreateThreadAsync(
+                    "ChatGPT",
+                    ThreadType.PublicThread);
+
+                _threads[ChatGptThreadKey] = thread;
+
+                var cfg = AppConfig.ChatGptSettings;
+                var configText = $"⚙️ **Конфигурация {cfg.SectionName}**\n" +
+                                 $"Модель чата: `{cfg.ChatModel}`\n" +
+                                 $"MaxTokens: `{cfg.MaxTokens}`\n" +
+                                 $"Модель изображений: `{cfg.ImageModel}`\n" +
+                                 $"Размер: `{cfg.ImageSize}`, качество: `{cfg.ImageQuality}`";
+
+                await thread.SendMessageAsync(configText);
             }
 
             Log.Information("Сессия логирования инициализирована: {ThreadCount} тредов", _threads.Count);
@@ -192,8 +217,9 @@ public static partial class BotLogger
 
     /// <summary>
     /// Разбивает сообщение на части по 2000 символов, стараясь резать по переносу строки.
+    /// Используется и для логов, и для длинных ответов ChatGPT.
     /// </summary>
-    private static List<string> SplitMessage(string text, int maxLength = 2000)
+    internal static List<string> SplitMessage(string text, int maxLength = 2000)
     {
         if (text.Length <= maxLength)
         {

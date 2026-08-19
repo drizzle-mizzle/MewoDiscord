@@ -31,6 +31,32 @@ public static class AppConfig
     /// </summary>
     public static bool UseAi { get; private set; }
 
+    /// <summary>
+    /// Включена ли ChatGPT-часть (чат и генерация изображений через CLIProxyAPI).
+    /// Как и <see cref="UseAi"/>, фиксируется при запуске: от флага зависит создание
+    /// лог-треда, горячая перезагрузка его не подхватывает.
+    /// </summary>
+    public static bool UseChatGpt { get; private set; }
+
+    /// <summary>
+    /// Адрес CLIProxyAPI — OpenAI-совместимого прокси к подписке ChatGPT Plus.
+    /// В Docker — http://cliproxy:8317, локально — http://localhost:8317.
+    /// </summary>
+    public static string ChatGptProxyUrl => Get("COMMON", nameof(ChatGptProxyUrl));
+
+    /// <summary>
+    /// Ключ клиента для CLIProxyAPI (совпадает с одним из api-keys в cliproxy/config.yaml).
+    /// </summary>
+    public static string ChatGptProxyApiKey => Get("COMMON", nameof(ChatGptProxyApiKey));
+
+    /// <summary>
+    /// Пароль management API CLIProxyAPI — для OAuth-логина через /chatgpt login.
+    /// Совпадает с MANAGEMENT_PASSWORD в cliproxy/management.env.
+    /// </summary>
+    public static string ChatGptManagementKey => Get("COMMON", nameof(ChatGptManagementKey));
+
+    public static ChatGptSectionConfig ChatGptSettings { get; } = new("CHATGPT_SETTINGS");
+
     public static AiSectionConfig CensorSettings { get; } = new("AI_CENSOR_SETTINGS");
     public static AiSectionConfig SwearsCheckerSettings { get; } = new("AI_SWEARS_CHECKER_SETTINGS");
     public static AiSectionConfig ChatSettings { get; } = new("AI_CHAT_SETTINGS");
@@ -50,6 +76,26 @@ public static class AppConfig
         public string SystemPrompt => Get(SectionName, "SystemPrompt");
 
         public string MessagePrompt => Get(SectionName, "MessagePrompt");
+    }
+
+    /// <summary>
+    /// Типизированная секция настроек ChatGPT (модели чата и генерации изображений).
+    /// Отдельный рекорд, а не <see cref="AiSectionConfig"/>: набор ключей другой
+    /// (нет температуры и промптов, есть параметры изображений).
+    /// </summary>
+    public record ChatGptSectionConfig(string SectionName)
+    {
+        public string ChatModel => Get(SectionName, "ChatModel", "gpt-5.5");
+
+        public int MaxTokens => GetInt(SectionName, "MaxTokens", 2048);
+
+        public string SystemPrompt => Get(SectionName, "SystemPrompt");
+
+        public string ImageModel => Get(SectionName, "ImageModel", "gpt-image-2");
+
+        public string ImageSize => Get(SectionName, "ImageSize", "1024x1024");
+
+        public string ImageQuality => Get(SectionName, "ImageQuality", "high");
     }
 
     #region Internals
@@ -75,6 +121,7 @@ public static class AppConfig
     {
         Reload();
         UseAi = GetBool("COMMON", nameof(UseAi), true);
+        UseChatGpt = GetBool("COMMON", nameof(UseChatGpt), false);
 
         try
         {

@@ -3,11 +3,32 @@ services:
     build: .
     container_name: mewo-discord
     restart: unless-stopped
+    depends_on:
+      - cliproxy
     volumes:
       - ./src/Files/config.ini:/app/Files/config.ini:ro
       - bot-logs:/app/logs
       - bot-state:/app/state
 
+  # OpenAI-совместимый прокси к подписке ChatGPT Plus (Codex OAuth).
+  # Логин — командой /chatgpt login в Discord; запасной путь:
+  # docker compose run --rm cliproxy --codex-device-login
+  cliproxy:
+    image: eceasy/cli-proxy-api:latest
+    container_name: cliproxy
+    restart: unless-stopped
+    env_file:
+      # Пароль management API (нужен для /chatgpt login); без файла прокси работает,
+      # но management выключен
+      - path: ./cliproxy/management.env
+        required: false
+    volumes:
+      - ./cliproxy/config.yaml:/CLIProxyAPI/config.yaml:ro
+      - cliproxy-auth:/root/.cli-proxy-api
+    ports:
+      - "127.0.0.1:8317:8317" # только для одноразового логина и curl-отладки
+
 volumes:
   bot-logs:
   bot-state:
+  cliproxy-auth:

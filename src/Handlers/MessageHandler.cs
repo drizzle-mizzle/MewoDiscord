@@ -105,6 +105,13 @@ public static class MessageHandler
         // Медиа из Telegram: работает независимо от ИИ и не потребляет сообщение
         TelegramMediaHandler.HandleInBackground(userMessage);
 
+        // Сессии ChatGPT: реплаи в закреплённые сообщения и пинги в каналах с сессиями.
+        // В таких каналах перехватывает обращения к боту раньше шуточного чата (UseAi)
+        if (AppConfig.UseChatGpt && await ChatGptSessionHandler.TryHandleAsync(userMessage))
+        {
+            return;
+        }
+
         // Всё, что ниже, — ИИ-функции
         if (!AppConfig.UseAi)
         {

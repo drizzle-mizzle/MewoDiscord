@@ -74,6 +74,54 @@ public static class BotMessages
     public static string TelegramTooBig(string size, string url) =>
         Format(nameof(TelegramTooBig), ("{size}", size), ("{url}", url));
 
+    public static string ChatGptLoginInstructions(string url) =>
+        Format(nameof(ChatGptLoginInstructions), ("{url}", url));
+
+    public static string ChatGptLoginStartFailed() =>
+        Format(nameof(ChatGptLoginStartFailed));
+
+    public static string ChatGptLoginDone() =>
+        Format(nameof(ChatGptLoginDone));
+
+    public static string ChatGptLoginFailed(string error) =>
+        Format(nameof(ChatGptLoginFailed), ("{error}", error));
+
+    public static string ChatGptStatusEmpty() =>
+        Format(nameof(ChatGptStatusEmpty));
+
+    public static string ChatGptStatusHeader(string count) =>
+        Format(nameof(ChatGptStatusHeader), ("{count}", count));
+
+    public static string ChatGptStatusUnavailable() =>
+        Format(nameof(ChatGptStatusUnavailable));
+
+    public static string ChatGptSessionNewChat() =>
+        Format(nameof(ChatGptSessionNewChat));
+
+    public static string ChatGptSessionNewImage() =>
+        Format(nameof(ChatGptSessionNewImage));
+
+    public static string ChatGptSessionsEmpty() =>
+        Format(nameof(ChatGptSessionsEmpty));
+
+    public static string ChatGptSessionsTitle() =>
+        Format(nameof(ChatGptSessionsTitle));
+
+    public static string ChatGptRequestFailed() =>
+        Format(nameof(ChatGptRequestFailed));
+
+    public static string ChatGptImageFailed() =>
+        Format(nameof(ChatGptImageFailed));
+
+    public static string ChatGptImageTooBig(string size) =>
+        Format(nameof(ChatGptImageTooBig), ("{size}", size));
+
+    public static string ChatGptEmptyPrompt() =>
+        Format(nameof(ChatGptEmptyPrompt));
+
+    public static string ChatGptGuildOnly() =>
+        Format(nameof(ChatGptGuildOnly));
+
     #region Internals
 
     private static readonly string MessagesPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Files", "messages.ini");

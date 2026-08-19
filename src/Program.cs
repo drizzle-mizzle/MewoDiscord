@@ -23,6 +23,11 @@ internal class Program
     /// </summary>
     private static readonly Type[] AiCommandModules = [typeof(SetCommands), typeof(ToggleCommands)];
 
+    /// <summary>
+    /// Модули команд ChatGPT-части. Регистрируются только при UseChatGpt = true.
+    /// </summary>
+    private static readonly Type[] ChatGptCommandModules = [typeof(ChatGptCommands), typeof(ChatGptSessionCommands)];
+
     private static async Task Main()
     {
         // Настройка логирования
@@ -54,6 +59,12 @@ internal class Program
         // БД исходных имён голосовых каналов, переименованных ботом
         ChannelNameStore.Load();
 
+        // БД сессий ChatGPT — нужна до первого сообщения
+        if (AppConfig.UseChatGpt)
+        {
+            ChatGptSessionStore.Load();
+        }
+
         // Инициализация обработчиков
         if (AppConfig.UseAi)
         {
@@ -71,6 +82,17 @@ internal class Program
         if (!AppConfig.UseAi)
         {
             foreach (var module in AiCommandModules)
+            {
+                await _interactions.RemoveModuleAsync(module);
+            }
+        }
+
+        // Аналогично для ChatGPT-части
+        if (!AppConfig.UseChatGpt)
+        {
+            BotLogger.Information("ChatGPT отключён (UseChatGpt: false): команды /chatgpt не активны");
+
+            foreach (var module in ChatGptCommandModules)
             {
                 await _interactions.RemoveModuleAsync(module);
             }

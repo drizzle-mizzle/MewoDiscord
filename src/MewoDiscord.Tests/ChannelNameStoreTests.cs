@@ -5,7 +5,9 @@ namespace MewoDiscord.Tests;
 /// <summary>
 /// Тесты БД исходных имён голосовых каналов. Автономны: только файловая система,
 /// без обращений к Discord и ИИ.
+/// Коллекция "state-directory" сериализует классы, переставляющие общий AppConfig.StateDirectory.
 /// </summary>
+[Collection("state-directory")]
 public class ChannelNameStoreTests : IDisposable
 {
     private const ulong ChannelId = 1234567890123456789;

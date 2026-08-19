@@ -5,6 +5,8 @@ publish/
 
 ## Secrets
 src/Files/config.ini
+cliproxy/management.env
+cliproxy/config.yaml
 
 ## IDE
 .idea/
