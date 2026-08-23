@@ -141,15 +141,17 @@ public static class YtDlpRunner
 
         try
         {
+            var arguments = BuildProbeArguments(YoutubeLinks.WatchUrl(videoId));
+
             var result = await ProcessRunner.RunAsync(
                 AppConfig.MediaSettings.YtDlpPath,
-                BuildProbeArguments(YoutubeLinks.WatchUrl(videoId)),
+                arguments,
                 TimeSpan.FromSeconds(ProbeTimeoutSeconds));
 
             if (!result.Ok)
             {
                 var failure = result.TimedOut ? YtDlpFailure.Failed : Classify(result.StandardError);
-                BotLogger.Warning("yt-dlp не смог прочитать {Id}: {Failure} / {Error}", videoId, failure, Tail(result.StandardError));
+                LogFailure("разведка", videoId, failure, arguments, result.StandardError);
 
                 return (null, failure);
             }
@@ -203,7 +205,7 @@ public static class YtDlpRunner
             if (!result.Ok)
             {
                 var failure = result.TimedOut ? YtDlpFailure.Failed : Classify(result.StandardError);
-                BotLogger.Warning("yt-dlp не скачал {Id}: {Failure} / {Error}", videoId, failure, Tail(result.StandardError));
+                LogFailure("качание", videoId, failure, arguments, result.StandardError);
 
                 return (null, failure);
             }
@@ -723,6 +725,27 @@ public static class YtDlpRunner
     }
 
     private static string Number(double value) => value.ToString("0.###", CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// Пишет в лог отказ вместе со списком аргументов. Аргументы обязательны: без них
+    /// по одному тексту ошибки не отличить «yt-dlp не может» от «мы попросили не то»,
+    /// а разница между разведкой из бота и той же ссылкой из консоли — как раз в них.
+    /// Секретов здесь нет: адрес собран из идентификатора видео, остальное — конфиг,
+    /// который писал администратор.
+    /// </summary>
+    private static void LogFailure(
+        string stage,
+        string videoId,
+        YtDlpFailure failure,
+        IReadOnlyList<string> arguments,
+        string stderr) =>
+        BotLogger.Warning(
+            "yt-dlp: {Stage} {Id} не удалась ({Failure})\nАргументы: {Arguments}\nВывод: {Error}",
+            stage,
+            videoId,
+            failure,
+            string.Join(' ', arguments),
+            Tail(stderr));
 
     /// <summary>
     /// Хвост вывода для лога: yt-dlp бывает многословен, а интересен всегда конец.
