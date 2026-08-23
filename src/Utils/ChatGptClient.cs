@@ -59,6 +59,41 @@ public static class ChatGptClient
     /// </summary>
     internal const int InstantMaxTokens = 512;
 
+    /// <summary>
+    /// Потолок цитаты в шапке сообщения: она напоминает, о чём речь, а не пересказывает
+    /// всю переписку — на это есть история сессии.
+    /// </summary>
+    internal const int MaxQuotedLength = 300;
+
+    /// <summary>
+    /// Имя бота, если настоящее определить не удалось.
+    /// </summary>
+    private const string DefaultBotName = "bot";
+
+    /// <summary>
+    /// Базовый системный промпт: объясняет модели, что она в общем чате с многими
+    /// собеседниками, как её зовут и в каком формате приходят сообщения. Формат описан
+    /// здесь и собирается в BuildHeader — править их надо вместе. Про Discord намеренно
+    /// ни слова: лишняя информация, которую модель начнёт трактовать.
+    /// Промпт из config.ini (характер, язык) дописывается следом.
+    /// </summary>
+    private const string BaseSystemPrompt =
+        """
+        Ты — собеседник в общем чате, где много участников.
+        Тебя зовут {botName}, к тебе обращаются по имени через @.
+
+        Сообщения участников приходят в устойчивом формате. Сначала служебные строки
+        в квадратных скобках, каждая со своей строки:
+        [имя] — кто написал сообщение, эта строка есть всегда;
+        [quotes имя: "текст"] — сообщение, на которое отвечает автор, если он кому-то отвечает;
+        [приложил изображения: имена файлов] — если к сообщению приложены картинки.
+        После служебных строк идёт сам текст сообщения.
+
+        Отвечай только текстом ответа: без служебных строк, без своего имени в начале
+        и без кавычек вокруг ответа. Чтобы обратиться к участнику, упомяни его как @имя —
+        ровно тем именем, которое стоит в квадратных скобках.
+        """;
+
     private static readonly HttpClient Http = new()
     {
         Timeout = TimeSpan.FromSeconds(RequestTimeoutSeconds)
@@ -90,6 +125,16 @@ public static class ChatGptClient
     internal record ChatTurn(string Role, string Text, IReadOnlyList<string> ImageDataUrls);
 
     /// <summary>
+    /// Обстановка вокруг сообщения: как зовут бота в этом чате, кто написал и на что
+    /// отвечает. Из неё собирается шапка сообщения и подставляется имя в системный промпт.
+    /// </summary>
+    public record ChatContext(
+        string? BotName = null,
+        string? AuthorName = null,
+        string? QuotedAuthor = null,
+        string? QuotedText = null);
+
+    /// <summary>
     /// Начатый OAuth-логин: ссылка для браузера и state сессии (живёт 5 минут).
     /// </summary>
     public record LoginStart(string Url, string State);
@@ -116,7 +161,7 @@ public static class ChatGptClient
     /// картинку (инструмент image_generation прокси подмешивает в каждый запрос),
     /// поэтому ответ может нести и текст, и изображения.
     /// </summary>
-    public static async Task<ChatReply> ChatAsync(ChatGptSession session, string text, IReadOnlyList<InputFile>? files = null)
+    public static async Task<ChatReply> ChatAsync(ChatGptSession session, string text, IReadOnlyList<InputFile>? files = null, ChatContext? context = null)
     {
         if (!IsReady())
         {
@@ -124,13 +169,13 @@ public static class ChatGptClient
         }
 
         var cfg = AppConfig.ChatGptSettings;
-        var turn = PrepareUserTurn(text, files);
+        var turn = PrepareUserTurn(text, files, context);
 
         // Последняя сгенерированная картинка подмешивается в текущий запрос, но не в историю:
         // картинки из ассистентских сообщений прокси отбрасывает (в Responses API они уходят
         // только от роли user), а без неё модель не сможет править нарисованное
         var carry = session.LastImage == null ? null : BuildDataUrl(session.LastImage.MimeType, session.LastImage.Content);
-        var json = BuildChatRequestJson(cfg.ChatModel, cfg.MaxTokens, session.History, turn, cfg.SystemPrompt, carry);
+        var json = BuildChatRequestJson(cfg.ChatModel, cfg.MaxTokens, session.History, turn, BuildSystemPrompt(context?.BotName), carry);
 
         BotLogger.LogAi(BotLogger.ChatGptThreadKey, "📤 Чат ({Model}, картинок: {Images}):\n{Text}", cfg.ChatModel, turn.ImageDataUrls.Count, turn.Text);
 
@@ -568,10 +613,11 @@ public static class ChatGptClient
     /// <see cref="MaxImagesPerRequest"/>), текстовые файлы — вклейкой в текст,
     /// негодные файлы — пометкой о пропуске.
     /// </summary>
-    internal static ChatTurn PrepareUserTurn(string text, IReadOnlyList<InputFile>? files)
+    internal static ChatTurn PrepareUserTurn(string text, IReadOnlyList<InputFile>? files, ChatContext? context = null)
     {
         var sb = new StringBuilder(text ?? string.Empty);
         var images = new List<string>();
+        var imageNames = new List<string>();
 
         foreach (var file in files ?? [])
         {
@@ -592,6 +638,7 @@ public static class ChatGptClient
                 }
 
                 images.Add(BuildDataUrl(imageMime, file.Content));
+                imageNames.Add(file.FileName);
                 continue;
             }
 
@@ -604,7 +651,67 @@ public static class ChatGptClient
             sb.Append($"\n[файл {file.FileName} пропущен: формат не поддерживается]");
         }
 
-        return new ChatTurn("user", sb.ToString(), images);
+        return new ChatTurn("user", BuildHeader(context, imageNames) + sb.ToString().Trim(), images);
+    }
+
+    /// <summary>
+    /// Служебная шапка сообщения: кто написал, на что отвечает, что приложил.
+    /// Формат описан модели в <see cref="BaseSystemPrompt"/> — менять их надо вместе.
+    /// </summary>
+    private static string BuildHeader(ChatContext? context, IReadOnlyList<string> imageNames)
+    {
+        var header = new StringBuilder();
+
+        if (!string.IsNullOrWhiteSpace(context?.AuthorName))
+        {
+            header.Append($"[{context.AuthorName}]").Append('\n');
+        }
+
+        if (!string.IsNullOrWhiteSpace(context?.QuotedAuthor))
+        {
+            var quoted = Shorten(context.QuotedText);
+
+            header
+                .Append(quoted.Length > 0
+                    ? $"[quotes {context.QuotedAuthor}: \"{quoted}\"]"
+                    : $"[quotes {context.QuotedAuthor}]")
+                .Append('\n');
+        }
+
+        if (imageNames.Count > 0)
+        {
+            header.Append($"[приложил изображения: {string.Join(", ", imageNames)}]").Append('\n');
+        }
+
+        return header.ToString();
+    }
+
+    /// <summary>
+    /// Ужимает цитируемый текст в одну строку: шапка должна оставаться шапкой,
+    /// а не пересказом всей переписки.
+    /// </summary>
+    private static string Shorten(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return string.Empty;
+        }
+
+        var single = text.ReplaceLineEndings(" ").Trim();
+
+        return single.Length <= MaxQuotedLength ? single : single[..MaxQuotedLength] + "…";
+    }
+
+    /// <summary>
+    /// Склеивает базовый промпт (формат чата и имя бота) с настроенным в config.ini.
+    /// </summary>
+    internal static string BuildSystemPrompt(string? botName)
+    {
+        var name = string.IsNullOrWhiteSpace(botName) ? DefaultBotName : botName.Trim();
+        var basePrompt = BaseSystemPrompt.Replace("{botName}", name);
+        var custom = AppConfig.ChatGptSettings.SystemPrompt;
+
+        return custom.Length > 0 ? basePrompt + "\n\n" + custom : basePrompt;
     }
 
     /// <summary>

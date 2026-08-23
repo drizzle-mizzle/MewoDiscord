@@ -103,6 +103,20 @@ ChatGPT-часть (только при `UseChatGpt: true`):
   история диалога и последняя картинка живут в `ChatGptSession` на стороне бота;
   сессия не потокобезопасна — вызовы сериализует владелец. Ошибки не бросаются наружу:
   лог + пустой ответ (стиль `OpenRouterClient`). Логи запросов — в тред «ChatGPT»
+- Формат чата: модель сидит в общем разговоре, где много собеседников, поэтому каждое
+  сообщение уходит с служебной шапкой (`ChatGptClient.BuildHeader`):
+  `[имя автора]`, `[quotes имя: "текст"]` (если автор кому-то отвечает; цитата ужимается
+  в одну строку до `MaxQuotedLength`), `[приложил изображения: имена файлов]` — и дальше
+  сам текст. Формат описан модели в `ChatGptClient.BaseSystemPrompt`, там же её имя
+  (ник бота на сервере) — менять промпт и `BuildHeader` надо вместе. Про Discord в промпте
+  намеренно ни слова: лишняя информация для трактовки. `SystemPrompt` из конфига
+  дописывается следом за базовым
+- Упоминания переводятся в обе стороны (`DiscordMentions`): в запрос уходит `@ИмяНаСервере`
+  вместо `<@1234567890>` (сырой id модели ни о чём не говорит), а `@имя` из ответа
+  превращается обратно в настоящее упоминание. Кандидаты на упоминание — только участники
+  обмена (автор, упомянутые им, автор цитаты): модель не может позвать произвольного
+  человека, а совпадения не ловятся наугад. Пинг разрешён только тем, кого она
+  действительно назвала — белый список `AllowedMentions.UserIds`
 - Сессии в Discord «как вкладки чатов» (`ChatGptSessionStore` + `ChatGptSessionHandler`):
   `/chatgpt new` отвечает публичным сообщением, за которым закрепляется сессия (типов сессий
   нет — «нарисуй кота» и «сколько будет 2+2» идут в одну и ту же сессию). Перед созданием
@@ -111,8 +125,10 @@ ChatGPT-часть (только при `UseChatGpt: true`):
   проверить не удалось (management API не настроен) — не мешает создать сессию.
   Реплай на **последнее** сообщение сессии — хит в неё (так ведутся параллельные
   диалоги в одном канале); ответ бота становится новым закреплённым сообщением. Пинг бота
-  в канале, где есть сессии, попадает в последнюю активную сессию канала. Реплай на старое
-  сообщение сессии игнорируется — правки истории и вилки не поддерживаются.
+  в канале, где есть сессии, попадает в последнюю активную сессию канала — в том числе
+  пинг, который заодно отвечает на чужое сообщение: тогда то сообщение едет в запрос
+  цитатой. Реплай на старое сообщение сессии игнорируется — правки истории и вилки
+  не поддерживаются.
   `/chatgpt sessions` — ephemeral-embed со списком (канал | всего сообщений | давность |
   ссылка-прыжок на последнее сообщение), свежие сверху. Счётчик сообщений живёт
   в `ChatGptSession.TotalTurns` и хранится в json сессии отдельно от истории: та обрезается
@@ -195,7 +211,8 @@ docker compose run --rm cliproxy --codex-device-login
 (БД имён каналов, временный каталог), `Telegram_*` (разбор виджета и поиск ссылок на фикстурах HTML),
 `Watcher_*` (матрица решений переименования каналов), `Gpt_*` (клиент ChatGPT: сборка запросов
 и разбор ответов; БД сессий во временном каталоге), `Messages_*` (разбор `messages.ini`)
-и `Action_*` (разбор файлов действий, распознавание «ДА», подстановка имён). Классы, переставляющие общий
+`Action_*` (разбор файлов действий, распознавание «ДА») и `Mentions_*`
+(перевод упоминаний в имена и обратно). Классы, переставляющие общий
 `AppConfig.StateDirectory`, объединены в xUnit-коллекцию "state-directory" — иначе
 параллельный прогон классов гоняется за одним статиком.
 Тесты `АИ_*` ходят в сеть: `АИ_Гпт*` — в поднятый CLIProxyAPI (нужны `UseChatGpt: true`
@@ -204,7 +221,7 @@ docker compose run --rm cliproxy --codex-device-login
 `Files/ai_prompts.legacy.ini` вместе с `OpenRouterApiKey`.
 Прогон без обращений к ИИ:
 ```bash
-dotnet test --filter "FullyQualifiedName~Regex_|FullyQualifiedName~Store_|FullyQualifiedName~Telegram_|FullyQualifiedName~Watcher_|FullyQualifiedName~Gpt_|FullyQualifiedName~Messages_|FullyQualifiedName~Action_"
+dotnet test --filter "FullyQualifiedName~Regex_|FullyQualifiedName~Store_|FullyQualifiedName~Telegram_|FullyQualifiedName~Watcher_|FullyQualifiedName~Gpt_|FullyQualifiedName~Messages_|FullyQualifiedName~Action_|FullyQualifiedName~Mentions_"
 ```
 
 ## Конфигурация
@@ -223,7 +240,9 @@ dotnet test --filter "FullyQualifiedName~Regex_|FullyQualifiedName~Store_|FullyQ
 - Секция `[CHATGPT_SETTINGS]` — `ChatModel`, `InstantModel`, `MaxTokens`, `SystemPrompt`;
   всё перечитывается на лету. Параметров изображений нет: их выбирает модель сама.
   `InstantModel` — дешёвая модель служебных запросов кастомных действий; не задана —
-  берётся `ChatModel`
+  берётся `ChatModel`. `SystemPrompt` — не весь системный промпт, а добавка к базовому
+  (`ChatGptClient.BaseSystemPrompt`): туда пишут характер и язык, формат чата описан
+  в базовом
 - Новое кастомное действие: файл в `Files/custom_ai_actions/` + процессор в
   `AiActionsProcessors/` + строка в `CustomAiActionProcessors`. Новый тип гейта —
   значение в `CustomAiActionGate` + ветка в `CustomAiActionHandler.PassesGate`

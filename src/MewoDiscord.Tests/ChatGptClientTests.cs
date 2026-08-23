@@ -102,9 +102,64 @@ public class ChatGptClientTests
         var file = new ChatGptClient.InputFile("cat.png", PngBytes);
         var turn = ChatGptClient.PrepareUserTurn("Что на картинке?", [file]);
 
-        Assert.Equal("Что на картинке?", turn.Text);
+        // Имена картинок модель видит строкой шапки: сами файлы уходят отдельными частями
+        Assert.Equal("[приложил изображения: cat.png]\nЧто на картинке?", turn.Text);
         Assert.Single(turn.ImageDataUrls);
         Assert.StartsWith("data:image/png;base64,", turn.ImageDataUrls[0]);
+    }
+
+    [Fact]
+    public void Gpt_ШапкаСообщенияСобираетсяПоФормату()
+    {
+        var turn = ChatGptClient.PrepareUserTurn(
+            "@bot добавь ей шляпку",
+            [
+                new ChatGptClient.InputFile("cat1.png", PngBytes),
+                new ChatGptClient.InputFile("cat2.png", PngBytes)
+            ],
+            new ChatGptClient.ChatContext("bot", "user2", "user1", "смотрите, моя кошка"));
+
+        Assert.Equal(
+            "[user2]\n[quotes user1: \"смотрите, моя кошка\"]\n[приложил изображения: cat1.png, cat2.png]\n@bot добавь ей шляпку",
+            turn.Text);
+
+        Assert.Equal(2, turn.ImageDataUrls.Count);
+    }
+
+    [Fact]
+    public void Gpt_ШапкаБезЦитатыИКартинокТолькоАвтор()
+    {
+        var turn = ChatGptClient.PrepareUserTurn("@bot привет!", null, new ChatGptClient.ChatContext("bot", "user1"));
+
+        Assert.Equal("[user1]\n@bot привет!", turn.Text);
+    }
+
+    [Fact]
+    public void Gpt_ДлиннаяЦитатаУжимаетсяВОднуСтроку()
+    {
+        var quote = new string('я', ChatGptClient.MaxQuotedLength + 50);
+        var turn = ChatGptClient.PrepareUserTurn("похвали", null, new ChatGptClient.ChatContext("bot", "user2", "user1", $"первая строка\nвторая {quote}"));
+
+        var header = turn.Text.Split('\n')[1];
+
+        Assert.StartsWith("[quotes user1: \"первая строка вторая", header);
+        Assert.EndsWith("…\"]", header);
+    }
+
+    [Fact]
+    public void Gpt_СистемныйПромптЗнаетИмяБотаИФормат()
+    {
+        var prompt = ChatGptClient.BuildSystemPrompt("REAL NEKO");
+
+        Assert.Contains("Тебя зовут REAL NEKO", prompt);
+        Assert.Contains("[quotes имя:", prompt);
+        Assert.Contains("@имя", prompt);
+
+        // Про Discord модели знать незачем — лишний повод для трактовок
+        Assert.DoesNotContain("Discord", prompt, StringComparison.OrdinalIgnoreCase);
+
+        // Имя не определилось — промпт всё равно осмысленный
+        Assert.Contains("Тебя зовут bot", ChatGptClient.BuildSystemPrompt(null));
     }
 
     [Fact]

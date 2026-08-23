@@ -30,6 +30,16 @@ public static partial class ChatGptSessionHandler
     };
 
     /// <summary>
+    /// Собранный ход сессии: текст, файлы, обстановка для шапки сообщения и словарь
+    /// «имя → id» тех, кого модели позволено упомянуть в ответе.
+    /// </summary>
+    internal record TurnRequest(
+        string Text,
+        IReadOnlyList<ChatGptClient.InputFile> Files,
+        ChatGptClient.ChatContext Context,
+        IReadOnlyDictionary<string, ulong> Mentionable);
+
+    /// <summary>
     /// Пытается направить сообщение в сессию ChatGPT.
     /// true — сообщение потреблено (хит запущен или реплай проигнорирован по правилам).
     /// </summary>
@@ -43,51 +53,52 @@ public static partial class ChatGptSessionHandler
         }
 
         var botId = guild.CurrentUser.Id;
+        var referencedId = message.Reference?.MessageId.IsSpecified == true ? message.Reference.MessageId.Value : (ulong?)null;
 
-        // Реплай: попадание в закреплённое сообщение — хит; в старое сообщение бота — игнор
-        if (message.Reference?.MessageId.IsSpecified == true)
+        // Реплай в закреплённое сообщение сессии — хит в неё. Цитаты здесь нет:
+        // это не «ответ кому-то», а продолжение того же разговора
+        if (referencedId != null)
         {
-            var referencedId = message.Reference.MessageId.Value;
-            var entry = ChatGptSessionStore.FindByMessageId(referencedId);
+            var anchored = ChatGptSessionStore.FindByMessageId(referencedId.Value);
 
-            if (entry != null)
+            if (anchored != null)
             {
-                StartHit(message, entry, stripMention: false);
+                StartHit(message, anchored, quoted: null);
                 return true;
             }
+        }
 
-            if (!ChatGptSessionStore.HasSessions(message.Channel.Id))
-            {
-                return false;
-            }
-
-            var referenced = message.Channel.GetCachedMessage(referencedId) ?? await FetchMessageAsync(message.Channel, referencedId);
-
-            if (referenced?.Author.Id == botId)
-            {
-                // Не последнее сообщение сессии — по ТЗ просто игнор, без реакции
-                BotLogger.Information("ChatGPT: реплай на старое сообщение {MessageId} проигнорирован", referencedId);
-                return true;
-            }
-
+        if (!message.MentionedUsers.Any(u => u.Id == botId))
+        {
             return false;
         }
 
-        // Пинг: сначала кастомные действия, потом продолжение последней активной сессии
-        if (message.MentionedUsers.Any(u => u.Id == botId))
+        // Пинг с реплаем на чужое сообщение — обращение с цитатой: её увидит модель
+        IMessage? quoted = null;
+
+        if (referencedId != null)
         {
-            if (await CustomAiActionHandler.TryHandleAsync(message, botId))
+            quoted = message.Channel.GetCachedMessage(referencedId.Value) ?? await FetchMessageAsync(message.Channel, referencedId.Value);
+
+            if (quoted?.Author.Id == botId && ChatGptSessionStore.HasSessions(message.Channel.Id))
             {
+                // Не последнее сообщение сессии — по ТЗ просто игнор, без реакции
+                BotLogger.Information("ChatGPT: реплай на старое сообщение {MessageId} проигнорирован", referencedId.Value);
                 return true;
             }
+        }
 
-            var entry = ChatGptSessionStore.FindLastActive(message.Channel.Id);
+        if (await CustomAiActionHandler.TryHandleAsync(message, botId))
+        {
+            return true;
+        }
 
-            if (entry != null)
-            {
-                StartHit(message, entry, stripMention: true);
-                return true;
-            }
+        var entry = ChatGptSessionStore.FindLastActive(message.Channel.Id);
+
+        if (entry != null)
+        {
+            StartHit(message, entry, quoted);
+            return true;
         }
 
         return false;
@@ -97,13 +108,13 @@ public static partial class ChatGptSessionHandler
     /// Запускает обработку хита в фоне: генерация занимает минуты и не должна
     /// держать канальный замок MessageHandler.
     /// </summary>
-    private static void StartHit(SocketUserMessage message, ChatGptSessionStore.SessionEntry entry, bool stripMention)
+    private static void StartHit(SocketUserMessage message, ChatGptSessionStore.SessionEntry entry, IMessage? quoted)
     {
         _ = Task.Run(async () =>
         {
             try
             {
-                await ProcessHitAsync(message, entry, stripMention);
+                await ProcessHitAsync(message, entry, quoted);
             }
             catch (Exception ex)
             {
@@ -112,15 +123,18 @@ public static partial class ChatGptSessionHandler
         });
     }
 
-    private static async Task ProcessHitAsync(SocketUserMessage message, ChatGptSessionStore.SessionEntry entry, bool stripMention)
+    private static async Task ProcessHitAsync(SocketUserMessage message, ChatGptSessionStore.SessionEntry entry, IMessage? quoted)
     {
         // Хиты в одну сессию — строго по одному: ChatGptSession не потокобезопасна
         await entry.Lock.WaitAsync();
 
         try
         {
-            var botId = ((message.Channel as SocketGuildChannel)?.Guild)?.CurrentUser.Id ?? 0;
-            var text = stripMention ? StripBotMention(message.Content, botId) : message.Content.Trim();
+            var guild = (message.Channel as SocketGuildChannel)?.Guild;
+
+            // Упоминания не вырезаем, а разворачиваем в имена — включая упоминание самого
+            // бота: модель должна видеть, к кому обращаются
+            var text = DiscordMentions.Humanize(message.Content.Trim(), message, guild);
             var (files, notes) = await DownloadAttachmentsAsync(message);
 
             if (notes.Count > 0)
@@ -138,12 +152,52 @@ public static partial class ChatGptSessionHandler
 
             using var typing = message.Channel.EnterTypingState();
 
-            await RunTurnAsync(message.Channel, message.Id, entry, text, files);
+            await RunTurnAsync(message.Channel, message.Id, entry, BuildRequest(message, guild, quoted, text, files));
         }
         finally
         {
             entry.Lock.Release();
         }
+    }
+
+    /// <summary>
+    /// Собирает ход: обстановку для шапки сообщения и список тех, кого модели позволено
+    /// упомянуть в ответе. Список — только участники этого обмена: автор, упомянутые им
+    /// и автор цитаты. Позвать кого-то ещё модель не сможет.
+    /// </summary>
+    private static TurnRequest BuildRequest(
+        SocketUserMessage message,
+        SocketGuild? guild,
+        IMessage? quoted,
+        string text,
+        IReadOnlyList<ChatGptClient.InputFile> files)
+    {
+        var botId = guild?.CurrentUser.Id ?? 0;
+        var mentionable = new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase);
+
+        void Allow(IUser? user)
+        {
+            if (user != null && user.Id != botId)
+            {
+                mentionable[DiscordMentions.DisplayNameOf(user)] = user.Id;
+            }
+        }
+
+        Allow(message.Author);
+        Allow(quoted?.Author);
+
+        foreach (var user in message.MentionedUsers)
+        {
+            Allow(user);
+        }
+
+        var context = new ChatGptClient.ChatContext(
+            guild?.CurrentUser.DisplayName,
+            DiscordMentions.DisplayNameOf(message.Author),
+            quoted == null ? null : DiscordMentions.DisplayNameOf(quoted.Author),
+            quoted == null ? null : DiscordMentions.Humanize(quoted.Content, guild));
+
+        return new TurnRequest(text, files, context, mentionable);
     }
 
     /// <summary>
@@ -157,16 +211,25 @@ public static partial class ChatGptSessionHandler
         ISocketMessageChannel channel,
         ulong referenceMessageId,
         ChatGptSessionStore.SessionEntry entry,
-        string text,
-        IReadOnlyList<ChatGptClient.InputFile> files)
+        TurnRequest request)
     {
-        var reply = await ChatGptClient.ChatAsync(entry.Runtime, text, files);
+        var reply = await ChatGptClient.ChatAsync(entry.Runtime, request.Text, request.Files, request.Context);
 
         if (reply.Text.Length == 0 && reply.Images.Count == 0)
         {
             await ReplyAsync(channel, referenceMessageId, BotEmbeds.Error(BotMessages.ChatGptRequestFailed()));
             return;
         }
+
+        // Модель пишет @имя — возвращаем настоящие упоминания. Пинговать разрешаем только
+        // тех, кого она действительно назвала, и только из участников обмена
+        var (replyText, mentioned) = DiscordMentions.Restore(reply.Text, request.Mentionable);
+
+        var allowedMentions = new AllowedMentions
+        {
+            UserIds = mentioned.ToList(),
+            MentionRepliedUser = false
+        };
 
         // Картинки крупнее лимита сервера не грузятся — вместо них уведомление
         var uploadLimit = ((channel as SocketGuildChannel)?.Guild)?.MaxUploadLimit ?? FallbackUploadLimit;
@@ -188,7 +251,7 @@ public static partial class ChatGptSessionHandler
         // Уведомление едет отдельным embed'ом на последнем сообщении ответа: текст модели
         // остаётся обычным сообщением, системная пометка не смешивается с ним
         var notice = oversized.Count > 0 ? BotEmbeds.Warning(string.Join('\n', oversized)) : null;
-        var chunks = reply.Text.Length > 0 ? BotLogger.SplitMessage(reply.Text) : [];
+        var chunks = replyText.Length > 0 ? BotLogger.SplitMessage(replyText) : [];
 
         // Ответ целиком не поместился: остаётся только уведомление
         if (chunks.Count == 0 && images.Count == 0)
@@ -211,7 +274,7 @@ public static partial class ChatGptSessionHandler
         {
             last = await channel.SendMessageAsync(
                 chunks[i],
-                allowedMentions: AllowedMentions.None,
+                allowedMentions: allowedMentions,
                 messageReference: first ? BuildReference(referenceMessageId) : null);
             first = false;
         }
@@ -227,7 +290,7 @@ public static partial class ChatGptSessionHandler
                 last = await channel.SendFilesAsync(
                     attachments,
                     embed: notice,
-                    allowedMentions: AllowedMentions.None,
+                    allowedMentions: allowedMentions,
                     messageReference: first ? BuildReference(referenceMessageId) : null);
             }
             finally
@@ -243,7 +306,7 @@ public static partial class ChatGptSessionHandler
             last = await channel.SendMessageAsync(
                 chunks[^1],
                 embed: notice,
-                allowedMentions: AllowedMentions.None,
+                allowedMentions: allowedMentions,
                 messageReference: first ? BuildReference(referenceMessageId) : null);
         }
 

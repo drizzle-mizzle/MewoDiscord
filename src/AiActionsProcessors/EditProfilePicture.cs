@@ -97,12 +97,19 @@ public static class EditProfilePicture
         {
             using var typing = message.Channel.EnterTypingState();
 
-            await ChatGptSessionHandler.RunTurnAsync(
-                message.Channel,
-                card.Id,
-                entry,
+            var request = new ChatGptSessionHandler.TurnRequest(
                 formalized,
-                [new ChatGptClient.InputFile(AvatarFileName, avatar, "image/png")]);
+                [new ChatGptClient.InputFile(AvatarFileName, avatar, "image/png")],
+                new ChatGptClient.ChatContext(
+                    guild.CurrentUser.DisplayName,
+                    DiscordMentions.DisplayNameOf(message.Author)),
+                new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [DiscordMentions.DisplayNameOf(message.Author)] = message.Author.Id,
+                    [DiscordMentions.DisplayNameOf(target)] = target.Id
+                });
+
+            await ChatGptSessionHandler.RunTurnAsync(message.Channel, card.Id, entry, request);
         }
         finally
         {

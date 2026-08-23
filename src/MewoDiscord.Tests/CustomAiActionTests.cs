@@ -87,25 +87,6 @@ public class CustomAiActionTests
     }
 
     [Fact]
-    public void Action_УпоминанияПревращаютсяВИмена()
-    {
-        var names = new Dictionary<ulong, string> { [111] = "Флауэр", [222] = "Мяу" };
-
-        Assert.Equal(
-            "измени @Флауэр аватарку",
-            DiscordMentions.Humanize("измени <@111> аватарку", id => names.GetValueOrDefault(id)));
-
-        // Формат с восклицательным знаком (старые ники) — тоже упоминание
-        Assert.Equal("@Мяу привет", DiscordMentions.Humanize("<@!222> привет", id => names.GetValueOrDefault(id)));
-
-        // Неизвестный пользователь остаётся как есть: сырой id лучше потерянного смысла
-        Assert.Equal("кто это <@999>", DiscordMentions.Humanize("кто это <@999>", id => names.GetValueOrDefault(id)));
-
-        // Роли и каналы не трогаем
-        Assert.Equal("<@&555> в <#777>", DiscordMentions.Humanize("<@&555> в <#777>", id => names.GetValueOrDefault(id)));
-    }
-
-    [Fact]
     public void Action_ФайлИзПоставкиВалиден()
     {
         var dir = AppDomain.CurrentDomain.BaseDirectory;
