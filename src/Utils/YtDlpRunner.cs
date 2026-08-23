@@ -28,6 +28,12 @@ public static class YtDlpRunner
     /// </summary>
     internal const double MaxAccurateCutSeconds = 300;
 
+    /// <summary>
+    /// Сколько символов вывода yt-dlp писать в лог при отказе. Интересен всегда конец,
+    /// но не одна последняя строка: причина часто в предупреждении перед ней.
+    /// </summary>
+    private const int TailLength = 800;
+
     private const int ProbeTimeoutSeconds = 90;
 
     private const int VersionTimeoutSeconds = 15;
@@ -244,7 +250,11 @@ public static class YtDlpRunner
             "--dump-single-json",
             "--skip-download",
             "--no-playlist",
-            "--no-warnings",
+
+            // --no-warnings здесь нет намеренно: у yt-dlp причина отказа часто живёт
+            // в предупреждении, а до кода доезжает только финальная строка ошибки.
+            // Мы читаем stderr исключительно при неудаче, так что лишний вывод ничего
+            // не стоит, а классификатору без него гадать не на чем
             "--no-progress",
 
             // Без этого yt-dlp читает /etc/yt-dlp.conf и молча переопределяет
@@ -271,7 +281,8 @@ public static class YtDlpRunner
         var arguments = new List<string>
         {
             "--no-playlist",
-            "--no-warnings",
+
+            // Предупреждения не глушим — см. комментарий в разведке
             "--no-progress",
             "--ignore-config",
             "--no-mtime",
@@ -720,7 +731,7 @@ public static class YtDlpRunner
     {
         var trimmed = text.Trim();
 
-        return trimmed.Length <= 400 ? trimmed : trimmed[^400..];
+        return trimmed.Length <= TailLength ? trimmed : trimmed[^TailLength..];
     }
 
     #endregion

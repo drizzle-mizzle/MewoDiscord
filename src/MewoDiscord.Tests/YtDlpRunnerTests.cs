@@ -226,6 +226,9 @@ public class YtDlpRunnerTests
         // С .part недокачанный кусок носит чужое имя и не может уехать в чат
         Assert.DoesNotContain("--no-part", arguments);
 
+        // Причина отказа часто живёт в предупреждении — глушить их нельзя
+        Assert.DoesNotContain("--no-warnings", arguments);
+
         Assert.Contains("--max-filesize", arguments);
         Assert.Contains("2000000000", arguments);
         Assert.Contains(arguments, a => a.Contains("height<=720", StringComparison.Ordinal));
@@ -297,5 +300,9 @@ public class YtDlpRunnerTests
         Assert.Contains("--dump-single-json", arguments);
         Assert.Contains("--no-playlist", arguments);
         Assert.Equal("--", arguments[^2]);
+
+        // Предупреждения не глушим: причина отказа у yt-dlp часто живёт именно в них,
+        // а классификатору без них гадать не на чем
+        Assert.DoesNotContain("--no-warnings", arguments);
     }
 }
