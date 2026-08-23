@@ -269,6 +269,23 @@ public class YtDlpRunnerTests
     }
 
     [Fact]
+    public void Media_ДополнительныеАргументыРазбиваютсяПоПробельным()
+    {
+        Assert.Equal(
+            ["--extractor-args", "youtube:player_client=tv,web_safari"],
+            YtDlpRunner.SplitExtraArgs("--extractor-args youtube:player_client=tv,web_safari"));
+
+        // Многострочное значение ini склеивается через перевод строки: разбивать
+        // только по пробелу значило бы отдать yt-dlp один битый аргумент
+        Assert.Equal(
+            ["--extractor-args", "youtube:player_client=tv", "--sleep-requests", "1"],
+            YtDlpRunner.SplitExtraArgs("--extractor-args youtube:player_client=tv\n--sleep-requests 1"));
+
+        Assert.Empty(YtDlpRunner.SplitExtraArgs(string.Empty));
+        Assert.Empty(YtDlpRunner.SplitExtraArgs("   \n  "));
+    }
+
+    [Fact]
     public void Media_РазведкаНичегоНеКачает()
     {
         var arguments = YtDlpRunner.BuildProbeArguments("https://www.youtube.com/watch?v=dQw4w9WgXcQ");

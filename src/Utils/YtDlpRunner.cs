@@ -331,13 +331,20 @@ public static class YtDlpRunner
             arguments.AddRange(["--cookies", cookies]);
         }
 
-        var extra = AppConfig.MediaSettings.YtDlpExtraArgs;
-
-        if (extra.Length > 0)
-        {
-            arguments.AddRange(extra.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
-        }
+        arguments.AddRange(SplitExtraArgs(AppConfig.MediaSettings.YtDlpExtraArgs));
     }
+
+    /// <summary>
+    /// Разбивает строку дополнительных аргументов из конфига. Разделителем считается
+    /// любой пробельный символ, а не только пробел: многострочное значение ini склеивается
+    /// через перевод строки, и такой аргумент уехал бы в yt-dlp одним битым куском.
+    /// Кавычки не снимаются и не нужны — аргументы уходят списком, а не строкой в оболочку,
+    /// поэтому кавычка стала бы обычным символом внутри значения.
+    /// </summary>
+    internal static string[] SplitExtraArgs(string value) =>
+        value.Split(
+            [' ', '\t', '\n', '\r'],
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
     /// <summary>
     /// yt-dlp зовёт ffmpeg сам, чтобы склеить раздельные видео- и аудиопотоки YouTube.
