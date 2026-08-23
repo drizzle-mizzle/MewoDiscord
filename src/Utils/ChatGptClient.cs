@@ -53,6 +53,12 @@ public static class ChatGptClient
     /// </summary>
     internal const int MaxImagesPerRequest = 8;
 
+    /// <summary>
+    /// Потолок ответа инстант-модели. Ей отвечать «ДА» или одной формализованной фразой,
+    /// но у рассуждающих моделей часть бюджета уходит на скрытые токены — с запасом.
+    /// </summary>
+    internal const int InstantMaxTokens = 512;
+
     private static readonly HttpClient Http = new()
     {
         Timeout = TimeSpan.FromSeconds(RequestTimeoutSeconds)
@@ -152,6 +158,38 @@ public static class ChatGptClient
         }
 
         BotLogger.LogAi(BotLogger.ChatGptThreadKey, "📥 Ответ (картинок: {Images}):\n{Reply}", reply.Images.Count, reply.Text.Length > 0 ? reply.Text : "(без текста)");
+
+        return reply;
+    }
+
+    /// <summary>
+    /// Одноразовый запрос к дешёвой «инстант»-модели: ни истории, ни сессии, ни картинок.
+    /// Нужен кастомным действиям — распознать попадание («ДА»/«НЕТ») и формализовать
+    /// запрос перед полноценной сессией. Пустая строка — ошибка или пустой ответ.
+    /// </summary>
+    public static async Task<string> AskInstantAsync(string prompt, int maxTokens = InstantMaxTokens)
+    {
+        if (!IsReady() || string.IsNullOrWhiteSpace(prompt))
+        {
+            return string.Empty;
+        }
+
+        var model = AppConfig.ChatGptSettings.InstantModel;
+        var turn = new ChatTurn("user", prompt, []);
+        var json = BuildChatRequestJson(model, maxTokens, [], turn);
+
+        BotLogger.LogAi(BotLogger.ChatGptThreadKey, "⚡ Инстант-запрос ({Model}):\n{Text}", model, prompt);
+
+        var responseBody = await PostJsonAsync(ChatCompletionsPath, json);
+
+        if (responseBody == null)
+        {
+            return string.Empty;
+        }
+
+        var reply = ParseChatResponse(responseBody).Text.Trim();
+
+        BotLogger.LogAi(BotLogger.ChatGptThreadKey, "⚡ Инстант-ответ:\n{Reply}", reply.Length > 0 ? reply : "(пусто)");
 
         return reply;
     }

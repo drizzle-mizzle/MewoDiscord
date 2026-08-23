@@ -19,6 +19,12 @@ Discord bot for a small friend server. Built with .NET 10.0 and [Discord.NET](ht
   continues the conversation, so several chats can run side by side in one channel. Requests go through
   a CLIProxyAPI sidecar backed by a ChatGPT Plus subscription, and the model decides on its own whether
   to answer with text or draw a picture, exactly like the web UI
+- **Custom AI actions** — a ping can mean "do it", not just "talk". A cheap system gate runs first
+  (no network), then a per-action prompt goes to a cheap instant model that answers yes or no; the first
+  action that hits takes over. Actions are flat ini files in `Files/custom_ai_actions/`, one per file,
+  each paired with a processor. The one shipped today edits a mentioned user's avatar: it downloads the
+  picture, opens a regular ChatGPT session around it and asks for the edit, so follow-up tweaks are
+  ordinary replies
 
 The former OpenRouter AI features (joke chat and the profanity censor) are dormant: the code is still
 there, but its entry points, settings and commands are disabled pending a rewrite on top of the proxy

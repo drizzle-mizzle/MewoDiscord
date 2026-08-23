@@ -131,6 +131,12 @@ public static class BotMessages
     public static string ChatGptNotAuthorized() =>
         Format(nameof(ChatGptNotAuthorized));
 
+    public static string AiActionAvatarCard(string user) =>
+        Format(nameof(AiActionAvatarCard), ("{user}", user));
+
+    public static string AiActionAvatarFailed(string user) =>
+        Format(nameof(AiActionAvatarFailed), ("{user}", user));
+
     #region Internals
 
     private static readonly string MessagesPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Files", "messages.ini");

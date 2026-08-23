@@ -25,12 +25,14 @@
   - `Commands/` — слеш-команды (модули Interaction Framework)
   - `Handlers/` — обработчики событий gateway
   - `Helpers/` — конфиг, логгер, тексты сообщений
+  - `AiActionsProcessors/` — процессоры кастомных действий (модуль CustomAiActions)
   - `Utils/` — клиенты внешних сервисов: ChatGPT (`ChatGptClient` + `ChatGptSession`),
     Telegram (`TelegramPostClient`) и отключённый ИИ (`AiClient` → `OpenRouterClient`)
   - БД сессий ChatGPT — `Helpers/ChatGptSessionStore` (файлы в `state/`), роутинг хитов —
     `Handlers/ChatGptSessionHandler`
   - `Files/` — `config.ini`, `messages.ini`, `swears.txt`, архив промптов отключённой
-    ИИ-части `ai_prompts.legacy.ini` (копируются в вывод)
+    ИИ-части `ai_prompts.legacy.ini`, каталог кастомных действий `custom_ai_actions/`
+    (копируются в вывод)
   - `MewoDiscord.Tests/` — xUnit-тесты: фильтр мата, БД имён каналов, разбор постов Telegram,
     клиент ChatGPT
 - `cliproxy/` — конфиг sidecar-прокси: `config.yaml` и `management.env` (секреты, вне git)
@@ -121,6 +123,26 @@ ChatGPT-часть (только при `UseChatGpt: true`):
   отправленное сообщение. Состояние переживает рестарт: индекс
   в `state/chatgpt_sessions.txt`, история и последняя картинка —
   в `state/chatgpt_sessions/{id}.json`
+- Кастомные действия (модуль CustomAiActions) — типизированные сценарии поверх
+  лингвистического интерфейса: пинг бота может означать не «поговорить», а «сделай».
+  Ловля двухступенчатая. Сначала системный гейт (`CustomAiActionGate`, пока один —
+  `HAS_USER_MENTION`): проверяется кодом, без сети, и отсекает почти всё. Затем `HIT_PROMPT`
+  действия уходит в дешёвую инстант-модель (`ChatGptClient.AskInstantAsync`,
+  модель `InstantModel`), от которой ждут «ДА». Действия с прошедшим гейтом пробуются
+  по очереди (порядок — по имени файла) до первого попадания; попало — остальные
+  отброшены, не попало ни одно — сообщение идёт дальше, в обычную сессию.
+  Описания действий — плоские ini в `Files/custom_ai_actions/`, по файлу на действие,
+  секции `[ACTION]` (название), `[GATE]`, `[HIT_PROMPT]` (в нём плейсхолдер `{{message}}`).
+  Перечитываются на лету. Имя файла — ключ процессора в `CustomAiActionProcessors`;
+  действие без процессора пропускается с предупреждением. В `{{message}}` подставляется
+  текст без упоминания бота и с упоминаниями в виде `@имя` (`DiscordMentions.Humanize`):
+  сырой `<@1234567890>` модели ни о чём не говорит.
+  Единственное действие сейчас — `edit_profile_picture` (`AiActionsProcessors/EditProfilePicture`):
+  скачивает аватарку упомянутого пользователя, шлёт карточку с ней, отдельным дешёвым
+  запросом превращает свободную фразу в инструкцию художнику, создаёт штатную сессию
+  ChatGPT, закреплённую за карточкой, и делает в неё хит с картинкой. Дальше правки
+  идут обычными реплаями в сессию — процессор просто автоматизировал ручной сценарий
+  «скачать аватарку, создать сессию, отправить в неё картинку»
 - Команды `/chatgpt-auth login` и `/chatgpt-auth status` (админские; отдельная группа,
   потому что у сабкоманд одной группы не может быть разных прав, а `/chatgpt new|sessions`
   доступны всем): OAuth-логин Codex прямо из Discord. `login` берёт ссылку у management API
@@ -172,7 +194,8 @@ docker compose run --rm cliproxy --codex-device-login
 `src/MewoDiscord.Tests` — xUnit. Автономны, сеть не нужна: `Regex_*` (фильтр мата), `Store_*`
 (БД имён каналов, временный каталог), `Telegram_*` (разбор виджета и поиск ссылок на фикстурах HTML),
 `Watcher_*` (матрица решений переименования каналов), `Gpt_*` (клиент ChatGPT: сборка запросов
-и разбор ответов; БД сессий во временном каталоге) и `Messages_*` (разбор `messages.ini`). Классы, переставляющие общий
+и разбор ответов; БД сессий во временном каталоге), `Messages_*` (разбор `messages.ini`)
+и `Action_*` (разбор файлов действий, распознавание «ДА», подстановка имён). Классы, переставляющие общий
 `AppConfig.StateDirectory`, объединены в xUnit-коллекцию "state-directory" — иначе
 параллельный прогон классов гоняется за одним статиком.
 Тесты `АИ_*` ходят в сеть: `АИ_Гпт*` — в поднятый CLIProxyAPI (нужны `UseChatGpt: true`
@@ -181,7 +204,7 @@ docker compose run --rm cliproxy --codex-device-login
 `Files/ai_prompts.legacy.ini` вместе с `OpenRouterApiKey`.
 Прогон без обращений к ИИ:
 ```bash
-dotnet test --filter "FullyQualifiedName~Regex_|FullyQualifiedName~Store_|FullyQualifiedName~Telegram_|FullyQualifiedName~Watcher_|FullyQualifiedName~Gpt_|FullyQualifiedName~Messages_"
+dotnet test --filter "FullyQualifiedName~Regex_|FullyQualifiedName~Store_|FullyQualifiedName~Telegram_|FullyQualifiedName~Watcher_|FullyQualifiedName~Gpt_|FullyQualifiedName~Messages_|FullyQualifiedName~Action_"
 ```
 
 ## Конфигурация
@@ -197,8 +220,14 @@ dotnet test --filter "FullyQualifiedName~Regex_|FullyQualifiedName~Store_|FullyQ
   адрес и ключ прокси (ключ совпадает с одним из `api-keys` в `cliproxy/config.yaml`),
   `ChatGptManagementKey` — пароль management API (совпадает с `MANAGEMENT_PASSWORD`
   в `cliproxy/management.env`); все читаются на лету
-- Секция `[CHATGPT_SETTINGS]` — `ChatModel`, `MaxTokens`, `SystemPrompt`; всё перечитывается
-  на лету. Параметров изображений нет: их выбирает модель сама
+- Секция `[CHATGPT_SETTINGS]` — `ChatModel`, `InstantModel`, `MaxTokens`, `SystemPrompt`;
+  всё перечитывается на лету. Параметров изображений нет: их выбирает модель сама.
+  `InstantModel` — дешёвая модель служебных запросов кастомных действий; не задана —
+  берётся `ChatModel`
+- Новое кастомное действие: файл в `Files/custom_ai_actions/` + процессор в
+  `AiActionsProcessors/` + строка в `CustomAiActionProcessors`. Новый тип гейта —
+  значение в `CustomAiActionGate` + ветка в `CustomAiActionHandler.PassesGate`
+  (гейт обязан быть дешёвым: он работает до похода в ИИ)
 - Новый конфиг: свойство в AppConfig + строка в `config.ini` и `config.example.ini`
 - Новое сообщение: метод в BotMessages + строка в `messages.ini`. Формат тот же, что у конфига:
   строка без `Ключ:` продолжает предыдущее сообщение, так пишутся многострочные инструкции.

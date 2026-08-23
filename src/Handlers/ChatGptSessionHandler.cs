@@ -73,9 +73,14 @@ public static partial class ChatGptSessionHandler
             return false;
         }
 
-        // Пинг: в канале с сессиями продолжает последнюю активную
+        // Пинг: сначала кастомные действия, потом продолжение последней активной сессии
         if (message.MentionedUsers.Any(u => u.Id == botId))
         {
+            if (await CustomAiActionHandler.TryHandleAsync(message, botId))
+            {
+                return true;
+            }
+
             var entry = ChatGptSessionStore.FindLastActive(message.Channel.Id);
 
             if (entry != null)
@@ -125,7 +130,7 @@ public static partial class ChatGptSessionHandler
 
             if (text.Length == 0 && files.Count == 0)
             {
-                await ReplyAsync(message, BotEmbeds.Warning(BotMessages.ChatGptEmptyPrompt()));
+                await ReplyAsync(message.Channel, message.Id, BotEmbeds.Warning(BotMessages.ChatGptEmptyPrompt()));
                 return;
             }
 
@@ -133,7 +138,7 @@ public static partial class ChatGptSessionHandler
 
             using var typing = message.Channel.EnterTypingState();
 
-            await HandleReplyAsync(message, entry, text, files);
+            await RunTurnAsync(message.Channel, message.Id, entry, text, files);
         }
         finally
         {
@@ -142,23 +147,29 @@ public static partial class ChatGptSessionHandler
     }
 
     /// <summary>
-    /// Отправляет ответ модели: текст чанками по 2000 символов, картинки — вложениями.
-    /// Модель сама решает, рисовать ли, поэтому в ответе может быть и то, и другое.
-    /// Привязка сессии переезжает на последнее отправленное сообщение; при ошибке
-    /// не трогается — реплай на прежнее сообщение можно повторить.
+    /// Выполняет ход сессии и отправляет ответ модели в канал: текст чанками по 2000
+    /// символов, картинки — вложениями. Модель сама решает, рисовать ли, поэтому в ответе
+    /// может быть и то, и другое. Ответ реплаится на referenceMessageId, а привязка сессии
+    /// переезжает на последнее отправленное сообщение; при ошибке не трогается —
+    /// реплай на прежнее сообщение можно повторить. Замок сессии берёт вызывающий.
     /// </summary>
-    private static async Task HandleReplyAsync(SocketUserMessage message, ChatGptSessionStore.SessionEntry entry, string text, List<ChatGptClient.InputFile> files)
+    internal static async Task RunTurnAsync(
+        ISocketMessageChannel channel,
+        ulong referenceMessageId,
+        ChatGptSessionStore.SessionEntry entry,
+        string text,
+        IReadOnlyList<ChatGptClient.InputFile> files)
     {
         var reply = await ChatGptClient.ChatAsync(entry.Runtime, text, files);
 
         if (reply.Text.Length == 0 && reply.Images.Count == 0)
         {
-            await ReplyAsync(message, BotEmbeds.Error(BotMessages.ChatGptRequestFailed()));
+            await ReplyAsync(channel, referenceMessageId, BotEmbeds.Error(BotMessages.ChatGptRequestFailed()));
             return;
         }
 
         // Картинки крупнее лимита сервера не грузятся — вместо них уведомление
-        var uploadLimit = ((message.Channel as SocketGuildChannel)?.Guild)?.MaxUploadLimit ?? FallbackUploadLimit;
+        var uploadLimit = ((channel as SocketGuildChannel)?.Guild)?.MaxUploadLimit ?? FallbackUploadLimit;
         var images = new List<ChatGptClient.GeneratedImage>();
         var oversized = new List<string>();
 
@@ -184,7 +195,7 @@ public static partial class ChatGptSessionHandler
         {
             if (notice != null)
             {
-                await ReplyAsync(message, notice);
+                await ReplyAsync(channel, referenceMessageId, notice);
             }
 
             return;
@@ -198,10 +209,10 @@ public static partial class ChatGptSessionHandler
 
         for (var i = 0; i < plainChunks; i++)
         {
-            last = await message.Channel.SendMessageAsync(
+            last = await channel.SendMessageAsync(
                 chunks[i],
                 allowedMentions: AllowedMentions.None,
-                messageReference: first ? BuildReference(message) : null);
+                messageReference: first ? BuildReference(referenceMessageId) : null);
             first = false;
         }
 
@@ -213,11 +224,11 @@ public static partial class ChatGptSessionHandler
 
             try
             {
-                last = await message.Channel.SendFilesAsync(
+                last = await channel.SendFilesAsync(
                     attachments,
                     embed: notice,
                     allowedMentions: AllowedMentions.None,
-                    messageReference: first ? BuildReference(message) : null);
+                    messageReference: first ? BuildReference(referenceMessageId) : null);
             }
             finally
             {
@@ -229,11 +240,11 @@ public static partial class ChatGptSessionHandler
         }
         else
         {
-            last = await message.Channel.SendMessageAsync(
+            last = await channel.SendMessageAsync(
                 chunks[^1],
                 embed: notice,
                 allowedMentions: AllowedMentions.None,
-                messageReference: first ? BuildReference(message) : null);
+                messageReference: first ? BuildReference(referenceMessageId) : null);
         }
 
         if (last != null)
@@ -296,14 +307,14 @@ public static partial class ChatGptSessionHandler
         }
     }
 
-    private static async Task<IUserMessage?> ReplyAsync(SocketUserMessage message, Embed embed)
+    private static async Task<IUserMessage?> ReplyAsync(ISocketMessageChannel channel, ulong referenceMessageId, Embed embed)
     {
         try
         {
-            return await message.Channel.SendMessageAsync(
+            return await channel.SendMessageAsync(
                 embed: embed,
                 allowedMentions: AllowedMentions.None,
-                messageReference: new MessageReference(message.Id, failIfNotExists: false));
+                messageReference: new MessageReference(referenceMessageId, failIfNotExists: false));
         }
         catch (Exception ex)
         {
@@ -312,8 +323,8 @@ public static partial class ChatGptSessionHandler
         }
     }
 
-    private static MessageReference BuildReference(SocketUserMessage message) =>
-        new(message.Id, failIfNotExists: false);
+    private static MessageReference BuildReference(ulong referenceMessageId) =>
+        new(referenceMessageId, failIfNotExists: false);
 
     private static string BuildImageFileName(string mime, int index)
     {

@@ -60,10 +60,11 @@ internal class Program
         // БД исходных имён голосовых каналов, переименованных ботом
         ChannelNameStore.Load();
 
-        // БД сессий ChatGPT — нужна до первого сообщения
+        // БД сессий ChatGPT и кастомные действия — нужны до первого сообщения
         if (AppConfig.UseChatGpt)
         {
             ChatGptSessionStore.Load();
+            CustomAiActionStore.Load();
         }
 
         // Регистрация модулей команд

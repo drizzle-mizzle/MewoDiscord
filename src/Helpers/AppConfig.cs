@@ -49,6 +49,21 @@ public static class AppConfig
     {
         public string ChatModel => Get(SectionName, "ChatModel", "gpt-5.5");
 
+        /// <summary>
+        /// Дешёвая модель для одноразовых служебных запросов кастомных действий
+        /// (распознать попадание, формализовать запрос). Пусто — берём ChatModel:
+        /// работать будет так же, просто дороже и медленнее.
+        /// </summary>
+        public string InstantModel
+        {
+            get
+            {
+                var model = Get(SectionName, nameof(InstantModel));
+
+                return model.Length > 0 ? model : ChatModel;
+            }
+        }
+
         public int MaxTokens => GetInt(SectionName, "MaxTokens", 2048);
 
         public string SystemPrompt => Get(SectionName, "SystemPrompt");
