@@ -133,6 +133,27 @@ public static partial class DiscordMentions
     private static bool IsNameChar(char c) => char.IsLetterOrDigit(c) || c == '_';
 
     /// <summary>
+    /// Id пользователей, упомянутых **в тексте** сообщения. Не то же самое, что
+    /// MentionedUsers: реплай с включённым «@» добавляет туда автора сообщения, на которое
+    /// отвечают, хотя тот в тексте не упомянут. Для решений вида «пользователь кого-то
+    /// назвал» годится только явное упоминание.
+    /// </summary>
+    public static IReadOnlyList<ulong> ExplicitUserIds(string content)
+    {
+        var ids = new List<ulong>();
+
+        foreach (Match match in UserMentionRegex().Matches(content))
+        {
+            if (ulong.TryParse(match.Groups[1].Value, out var id) && !ids.Contains(id))
+            {
+                ids.Add(id);
+            }
+        }
+
+        return ids;
+    }
+
+    /// <summary>
     /// Имя пользователя так, как его видят на сервере: ник, иначе глобальное имя.
     /// Берёт IUser, а не SocketUser: автор цитаты может приехать из REST, а не из кэша.
     /// </summary>

@@ -52,9 +52,11 @@ public static class EditProfilePicture
             return;
         }
 
-        // Гейт HAS_USER_MENTION гарантирует упоминание, но целью может быть только человек,
-        // а не сам бот: его упоминание — это обращение
-        var target = message.MentionedUsers.FirstOrDefault(u => u.Id != guild.CurrentUser.Id);
+        // Цель берём из упоминаний в тексте, а не из MentionedUsers: туда реплай подставляет
+        // автора цитаты, и тогда бот правил бы аватарку человеку, которого никто не звал.
+        // Сам бот целью быть не может — его упоминание это обращение
+        var targetId = DiscordMentions.ExplicitUserIds(message.Content).FirstOrDefault(id => id != guild.CurrentUser.Id);
+        var target = targetId == 0 ? null : message.MentionedUsers.FirstOrDefault(u => u.Id == targetId) ?? guild.GetUser(targetId);
 
         if (target is null)
         {

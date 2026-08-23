@@ -171,10 +171,7 @@ public static class ChatGptClient
         var cfg = AppConfig.ChatGptSettings;
         var turn = PrepareUserTurn(text, files, context);
 
-        // Последняя сгенерированная картинка подмешивается в текущий запрос, но не в историю:
-        // картинки из ассистентских сообщений прокси отбрасывает (в Responses API они уходят
-        // только от роли user), а без неё модель не сможет править нарисованное
-        var carry = session.LastImage == null ? null : BuildDataUrl(session.LastImage.MimeType, session.LastImage.Content);
+        var carry = ResolveCarryImage(session, turn);
         var json = BuildChatRequestJson(cfg.ChatModel, cfg.MaxTokens, session.History, turn, BuildSystemPrompt(context?.BotName), carry);
 
         BotLogger.LogAi(BotLogger.ChatGptThreadKey, "📤 Чат ({Model}, картинок: {Images}):\n{Text}", cfg.ChatModel, turn.ImageDataUrls.Count, turn.Text);
@@ -701,6 +698,18 @@ public static class ChatGptClient
 
         return single.Length <= MaxQuotedLength ? single : single[..MaxQuotedLength] + "…";
     }
+
+    /// <summary>
+    /// Решает, подмешивать ли в запрос последнюю нарисованную картинку. Она нужна, чтобы
+    /// модель могла править нарисованное («сделай его рыжим»): в истории её нет, потому что
+    /// картинки из ассистентских сообщений прокси отбрасывает (в Responses API они уходят
+    /// только от роли user). Но если пользователь принёс свои картинки, предмет разговора
+    /// теперь они — прошлая только сбивала бы модель с толку.
+    /// </summary>
+    internal static string? ResolveCarryImage(ChatGptSession session, ChatTurn turn) =>
+        session.LastImage == null || turn.ImageDataUrls.Count > 0
+            ? null
+            : BuildDataUrl(session.LastImage.MimeType, session.LastImage.Content);
 
     /// <summary>
     /// Склеивает базовый промпт (формат чата и имя бота) с настроенным в config.ini.

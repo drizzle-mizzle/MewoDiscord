@@ -83,8 +83,10 @@ public static class CustomAiActionHandler
     /// </summary>
     internal static bool PassesGate(CustomAiActionGate gate, SocketUserMessage message, ulong botId) => gate switch
     {
-        // Упоминание самого бота не в счёт: это обращение, а не цель действия
-        CustomAiActionGate.HasUserMention => message.MentionedUsers.Any(u => u.Id != botId),
+        // Только упоминания из текста сообщения: реплай с включённым «@» подставляет
+        // в MentionedUsers автора цитаты, и гейт срабатывал бы там, где никого не звали.
+        // Упоминание самого бота не в счёт — это обращение, а не цель действия
+        CustomAiActionGate.HasUserMention => DiscordMentions.ExplicitUserIds(message.Content).Any(id => id != botId),
         _ => false
     };
 

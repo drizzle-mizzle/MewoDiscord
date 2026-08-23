@@ -127,6 +127,26 @@ public class ChatGptClientTests
     }
 
     [Fact]
+    public void Gpt_СвояКартинкаВытесняетПрошлуюСгенерированную()
+    {
+        var session = new ChatGptSession
+        {
+            LastImage = new ChatGptClient.GeneratedImage(PngBytes, "image/png", null)
+        };
+
+        // Без новых картинок прошлая подмешивается — иначе не поправить нарисованное
+        var edit = ChatGptClient.PrepareUserTurn("сделай его рыжим", null);
+        Assert.StartsWith("data:image/png;base64,", ChatGptClient.ResolveCarryImage(session, edit));
+
+        // Пользователь принёс свою картинку — предмет разговора теперь она
+        var withOwn = ChatGptClient.PrepareUserTurn("а этой добавь ушки", [new ChatGptClient.InputFile("gif.png", PngBytes)]);
+        Assert.Null(ChatGptClient.ResolveCarryImage(session, withOwn));
+
+        // Пустая сессия — подмешивать нечего
+        Assert.Null(ChatGptClient.ResolveCarryImage(new ChatGptSession(), edit));
+    }
+
+    [Fact]
     public void Gpt_ШапкаБезЦитатыИКартинокТолькоАвтор()
     {
         var turn = ChatGptClient.PrepareUserTurn("@bot привет!", null, new ChatGptClient.ChatContext("bot", "user1"));

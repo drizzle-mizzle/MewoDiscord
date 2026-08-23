@@ -78,7 +78,14 @@ public static partial class ChatGptSessionHandler
 
         if (referencedId != null)
         {
-            quoted = message.Channel.GetCachedMessage(referencedId.Value) ?? await FetchMessageAsync(message.Channel, referencedId.Value);
+            quoted = message.Channel.GetCachedMessage(referencedId.Value);
+
+            // Embed'ы ссылок Discord дорисовывает уже после доставки сообщения, и в кэше
+            // их может не быть — за гифкой по ссылке идём в REST за свежей копией
+            if (quoted == null || (quoted.Attachments.Count == 0 && quoted.Embeds.Count == 0))
+            {
+                quoted = await FetchMessageAsync(message.Channel, referencedId.Value) ?? quoted;
+            }
 
             if (quoted?.Author.Id == botId && ChatGptSessionStore.HasSessions(message.Channel.Id))
             {
@@ -135,7 +142,16 @@ public static partial class ChatGptSessionHandler
             // Упоминания не вырезаем, а разворачиваем в имена — включая упоминание самого
             // бота: модель должна видеть, к кому обращаются
             var text = DiscordMentions.Humanize(message.Content.Trim(), message, guild);
-            var (files, notes) = await DownloadAttachmentsAsync(message);
+            var (files, notes) = await DownloadMediaAsync(message);
+
+            // Картинки цитируемого сообщения — тоже предмет разговора: «@bot добавь ей ушки»
+            // в ответ на чужую гифку говорит именно о ней
+            if (quoted != null)
+            {
+                var (quotedFiles, quotedNotes) = await DownloadMediaAsync(quoted);
+                files.AddRange(quotedFiles);
+                notes.AddRange(quotedNotes);
+            }
 
             if (notes.Count > 0)
             {
@@ -320,7 +336,7 @@ public static partial class ChatGptSessionHandler
     /// Скачивает вложения сообщения. Непригодные (слишком большие, не скачавшиеся)
     /// превращаются в пометки, которые дописываются к тексту запроса.
     /// </summary>
-    private static async Task<(List<ChatGptClient.InputFile> Files, List<string> Notes)> DownloadAttachmentsAsync(SocketUserMessage message)
+    private static async Task<(List<ChatGptClient.InputFile> Files, List<string> Notes)> DownloadMediaAsync(IMessage message)
     {
         var files = new List<ChatGptClient.InputFile>();
         var notes = new List<string>();
@@ -345,7 +361,81 @@ public static partial class ChatGptSessionHandler
             }
         }
 
+        // Картинка или гифка, вставленная ссылкой, вложением не является: Discord показывает
+        // её embed'ом, а сам файл лежит на чужом хосте
+        foreach (var url in CollectEmbedImageUrls(message))
+        {
+            try
+            {
+                var content = await Http.GetByteArrayAsync(url);
+
+                if (content.Length > ChatGptClient.MaxInputFileBytes)
+                {
+                    notes.Add("[картинка по ссылке пропущена: превышен лимит размера]");
+                    continue;
+                }
+
+                files.Add(new ChatGptClient.InputFile(FileNameFromUrl(url), content));
+            }
+            catch (Exception ex)
+            {
+                BotLogger.Warning("ChatGPT: не удалось скачать картинку из embed'а {Url}: {Message}", url, ex.Message);
+            }
+        }
+
         return (files, notes);
+    }
+
+    /// <summary>
+    /// Ссылки на картинки из embed'ов сообщения. Берём только то, что действительно
+    /// картинка: превью статьи или ссылки — шум, а не предмет разговора.
+    /// </summary>
+    private static List<string> CollectEmbedImageUrls(IMessage message)
+    {
+        var urls = new List<string>();
+
+        foreach (var embed in message.Embeds)
+        {
+            var url = embed.Image?.ProxyUrl ?? embed.Image?.Url;
+
+            if (url == null && embed.Type is EmbedType.Image or EmbedType.Gifv or EmbedType.Video)
+            {
+                url = embed.Thumbnail?.ProxyUrl ?? embed.Thumbnail?.Url;
+            }
+
+            if (url != null)
+            {
+                urls.Add(PreferStaticImage(url));
+            }
+        }
+
+        return urls;
+    }
+
+    /// <summary>
+    /// Просит у прокси Discord статичную png. Гифка нужна модели одним кадром: анимацию
+    /// она всё равно не понимает, а свой прокси Discord умеет конвертировать на лету.
+    /// Чужие хосты (tenor и прочие) остаются как есть — там такого параметра нет.
+    /// </summary>
+    private static string PreferStaticImage(string url)
+    {
+        if (!url.Contains("media.discordapp.net", StringComparison.OrdinalIgnoreCase))
+        {
+            return url;
+        }
+
+        return url.Contains('?') ? url + "&format=png" : url + "?format=png";
+    }
+
+    /// <summary>
+    /// Имя файла из ссылки — только чтобы модель видела его в шапке сообщения.
+    /// </summary>
+    private static string FileNameFromUrl(string url)
+    {
+        var path = Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.AbsolutePath : url;
+        var name = Path.GetFileName(path);
+
+        return string.IsNullOrWhiteSpace(name) ? "image.png" : name;
     }
 
     /// <summary>

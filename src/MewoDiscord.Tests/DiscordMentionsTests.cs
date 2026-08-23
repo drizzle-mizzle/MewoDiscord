@@ -42,6 +42,22 @@ public class DiscordMentionsTests
     }
 
     [Fact]
+    public void Mentions_ЯвныеУпоминанияБерутсяТолькоИзТекста()
+    {
+        Assert.Equal([111ul, 222ul], DiscordMentions.ExplicitUserIds("<@111> позови <@!222>"));
+
+        // Повтор считается один раз
+        Assert.Equal([111ul], DiscordMentions.ExplicitUserIds("<@111> и снова <@111>"));
+
+        // Реплай подставляет автора цитаты в MentionedUsers, но в тексте его нет —
+        // здесь только то, что человек написал сам
+        Assert.Empty(DiscordMentions.ExplicitUserIds("добавь ей ушки"));
+
+        // Роли — не пользователи
+        Assert.Empty(DiscordMentions.ExplicitUserIds("<@&555> внимание"));
+    }
+
+    [Fact]
     public void Mentions_ОтветМоделиВозвращаетНастоящиеУпоминания()
     {
         var (text, mentioned) = DiscordMentions.Restore("@Флауэр ты большой молодец", Mentionable);
