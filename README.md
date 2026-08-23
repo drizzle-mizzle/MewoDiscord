@@ -111,10 +111,18 @@ so both survive `docker compose up --build`. A `cliproxy` sidecar (CLIProxyAPI) 
 serves the ChatGPT part; its config comes from `cliproxy/config.yaml`, the management password from
 `cliproxy/management.env`, and Codex OAuth tokens live in the `cliproxy-auth` volume.
 
-ffmpeg comes from apt; yt-dlp is pulled into the build stage as the static release binary and copied
-across, so the runtime image needs neither python nor curl. Its version is pinned by `YTDLP_VERSION`
-in the `Dockerfile` — YouTube breaks yt-dlp roughly monthly and upstream fixes land within days, so when
-the bot starts replying "похоже, пора обновить yt-dlp", bump that line and rebuild.
+ffmpeg comes from apt; yt-dlp and deno are pulled into the build stage as static release binaries and
+copied across, so the runtime image needs neither python nor curl. Both are verified with `--version`
+in the runtime stage rather than the build stage, because deno is dynamically linked and could be
+missing a library exactly there. Versions are pinned by `YTDLP_VERSION` and `DENO_VERSION` — YouTube
+breaks yt-dlp roughly monthly and upstream fixes land within days, so when the bot starts replying
+"похоже, пора обновить yt-dlp", bump that line and rebuild.
+
+**deno is not optional.** YouTube hands out stream URLs behind a signature computed by its own player
+JavaScript, and yt-dlp needs a JS runtime to solve it. Without one it still reaches YouTube, then fails
+with `Signature solving failed` and `The page needs to be reloaded` — nothing downloads at all. The
+solver scripts (`yt-dlp-ejs`) already ship inside the standalone binary; only the engine was missing.
+deno is the one yt-dlp discovers on its own, with no `--js-runtimes` flag; 2.3.0 is the minimum.
 
 ### The media volume
 

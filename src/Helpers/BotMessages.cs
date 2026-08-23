@@ -214,6 +214,9 @@ public static class BotMessages
     public static string YoutubeToolOutdated() =>
         Format(nameof(YoutubeToolOutdated));
 
+    public static string YoutubeJsRuntime() =>
+        Format(nameof(YoutubeJsRuntime));
+
     public static string YoutubeNoRoom() =>
         Format(nameof(YoutubeNoRoom));
 

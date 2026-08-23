@@ -449,6 +449,7 @@ public static partial class DownloadVideo
         YtDlpRunner.YtDlpFailure.GeoBlocked => BotMessages.YoutubeGeoBlocked(),
         YtDlpRunner.YtDlpFailure.Unavailable => BotMessages.YoutubeUnavailable(),
         YtDlpRunner.YtDlpFailure.Outdated => BotMessages.YoutubeToolOutdated(),
+        YtDlpRunner.YtDlpFailure.JsRuntime => BotMessages.YoutubeJsRuntime(),
         _ => BotMessages.YoutubeFailed()
     };
 

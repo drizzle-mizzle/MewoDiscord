@@ -65,6 +65,12 @@ public static class YtDlpRunner
         GeoBlocked,
         Unavailable,
         Outdated,
+
+        /// <summary>
+        /// В системе нет JavaScript-рантайма, которым yt-dlp считает подпись YouTube.
+        /// Чинится установкой, а не ожиданием, поэтому отделено от прочих поломок.
+        /// </summary>
+        JsRuntime,
         Failed
     }
 
@@ -556,6 +562,15 @@ public static class YtDlpRunner
         if (Has(text, "video unavailable", "has been removed", "does not exist", "members-only", "no longer available"))
         {
             return YtDlpFailure.Unavailable;
+        }
+
+        // Нет движка, которым считается подпись YouTube. Проверяется до Outdated:
+        // «не смог разобрать» тут следствие, а не причина, и совет обновить yt-dlp
+        // увёл бы в сторону от настоящего лечения — поставить рантайм
+        if (Has(text, "signature solving failed", "challenge solving failed",
+            "the page needs to be reloaded", "javascript runtime"))
+        {
+            return YtDlpFailure.JsRuntime;
         }
 
         // Проверяется последним: «не смог разобрать» бывает и следствием причин выше,
