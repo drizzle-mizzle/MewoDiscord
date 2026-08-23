@@ -60,22 +60,25 @@ public static partial class ChatGptSessionHandler
         // это не «ответ кому-то», а продолжение того же разговора
         if (referencedId != null)
         {
-            var anchored = ChatGptSessionStore.FindByMessageId(referencedId.Value);
-
-            if (anchored != null)
-            {
-                StartHit(message, anchored, quoted: null);
-                return true;
-            }
-
-            // Реплай на результат операции над файлом — продолжение работы над ним же.
-            // Упоминание бота тут не требуется, как и в сессиях ChatGPT: ответ
-            // в закреплённое сообщение сам по себе однозначен
+            // Медиа-сессия проверяется первой, хотя на одном сообщении может висеть
+            // и она, и сессия ChatGPT. Так и задумано: медиа-путь умеет отдать работу
+            // модели (просьба оказалась не механической), а обратно — нет, поэтому
+            // решать, чей это ход, должен именно он.
+            // Упоминание бота на этом пути не нужно, как и в сессиях ChatGPT:
+            // ответ в закреплённое сообщение сам по себе однозначен
             var media = MediaSessionStore.FindByAnchor(referencedId.Value);
 
             if (media != null)
             {
                 StartMediaTurn(message, media);
+                return true;
+            }
+
+            var anchored = ChatGptSessionStore.FindByMessageId(referencedId.Value);
+
+            if (anchored != null)
+            {
+                StartHit(message, anchored, quoted: null);
                 return true;
             }
         }
@@ -254,7 +257,12 @@ public static partial class ChatGptSessionHandler
     /// переезжает на последнее отправленное сообщение; при ошибке не трогается —
     /// реплай на прежнее сообщение можно повторить. Замок сессии берёт вызывающий.
     /// </summary>
-    internal static async Task RunTurnAsync(
+    /// <summary>
+    /// Возвращает последнее отправленное сообщение ответа — за него цепляются те, кому
+    /// нужно знать, чем кончился ход: медиа-сессия переезжает на него, если модель
+    /// прислала картинку. null — ответа не вышло.
+    /// </summary>
+    internal static async Task<IUserMessage?> RunTurnAsync(
         ISocketMessageChannel channel,
         ulong referenceMessageId,
         ChatGptSessionStore.SessionEntry entry,
@@ -265,7 +273,7 @@ public static partial class ChatGptSessionHandler
         if (reply.Text.Length == 0 && reply.Images.Count == 0)
         {
             await ReplyAsync(channel, referenceMessageId, BotEmbeds.Error(BotMessages.ChatGptRequestFailed()));
-            return;
+            return null;
         }
 
         // Модель пишет @имя — возвращаем настоящие упоминания. Пинговать разрешаем только
@@ -308,7 +316,7 @@ public static partial class ChatGptSessionHandler
                 await ReplyAsync(channel, referenceMessageId, notice);
             }
 
-            return;
+            return null;
         }
 
         // Текст без картинок: последний чанк уходит обычным сообщением,
@@ -361,6 +369,8 @@ public static partial class ChatGptSessionHandler
         {
             ChatGptSessionStore.Rebind(entry, last.Id);
         }
+
+        return last;
     }
 
     /// <summary>

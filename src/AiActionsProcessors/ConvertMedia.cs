@@ -25,6 +25,12 @@ public static class ConvertMedia
     private const int DownloadTimeoutSeconds = 120;
 
     /// <summary>
+    /// Потолок картинки, уходящей модели. Она смотрит на неподвижный кадр, и десяток
+    /// мегабайт в запросе не даёт ничего, кроме времени ожидания.
+    /// </summary>
+    private const long MaxModelImageBytes = 8 * 1024 * 1024;
+
+    /// <summary>
     /// Список полей плана для файла, который видно: кроп здесь осмыслен, потому что
     /// размеры исходника известны и сообщаются модели.
     /// </summary>
@@ -163,9 +169,26 @@ public static class ConvertMedia
 
         var plan = await AskPlanAsync(text, source.FileName, info, previous);
 
+        // Пустой план — надёжный признак, что просьба не механическая: его вернула та же
+        // модель, которой перечислен весь список операций. «Вырежи персонажа с фона»
+        // сюда доезжает именно так, и тупик «не понял, что сделать» был бы враньём —
+        // сделать можно, просто не ffmpeg'ом
         if (plan == null || plan.IsEmpty)
         {
-            await ReplyAsync(message, BotEmbeds.Warning(BotMessages.MediaPlanUnclear()));
+            var image = await ReadForModelAsync(inputPath, info);
+
+            // Слот больше не нужен, а поход в модель занимает минуту: отпускаем заранее,
+            // чтобы чужая обрезка не ждала чужой перерисовки. Dispose идемпотентен,
+            // внешний using повторит его без последствий
+            workspace.Dispose();
+
+            if (image == null)
+            {
+                await ReplyAsync(message, BotEmbeds.Warning(BotMessages.MediaPlanUnclear()));
+                return;
+            }
+
+            await HandOffToModelAsync(message, text, source.FileName, image, previousAnchorId);
             return;
         }
 
@@ -199,8 +222,111 @@ public static class ConvertMedia
                 sourceMessageId,
                 MediaPlanParser.Serialize(plan),
                 previousAnchorId);
+
+            // Если на прошлом якоре висела и сессия ChatGPT, переносим её следом:
+            // тогда «а теперь добавь усики» после механической правки продолжит
+            // тот же разговор, а не начнёт с чистого листа
+            if (previousAnchorId != null
+                && ChatGptSessionStore.FindByMessageId(previousAnchorId.Value) is { } chat)
+            {
+                ChatGptSessionStore.Rebind(chat, sent.Id);
+            }
         }
     }
+
+    /// <summary>
+    /// Читает файл для отправки модели. null — работа ей не по силам или не по размеру:
+    /// покадровая правка видео и гифки моделью не делается (об этом сказано отдельно),
+    /// а десятки мегабайт в запрос тащить незачем.
+    /// </summary>
+    private static async Task<byte[]?> ReadForModelAsync(string path, FfmpegRunner.MediaInfo info)
+    {
+        if (info.Video == null || info.DurationSeconds > 0)
+        {
+            return null;
+        }
+
+        var size = new FileInfo(path).Length;
+
+        return size > MaxModelImageBytes ? null : await File.ReadAllBytesAsync(path);
+    }
+
+    /// <summary>
+    /// Отдаёт просьбу штатной сессии ChatGPT с текущей картинкой во вложении.
+    /// Картинка прикладывается всегда, а не полагается на память сессии: после
+    /// механической правки модель помнит прошлый кадр, и «добавь усики» ушли бы
+    /// на необрезанную версию.
+    /// </summary>
+    private static async Task HandOffToModelAsync(
+        SocketUserMessage message,
+        string text,
+        string fileName,
+        byte[] image,
+        ulong? previousAnchorId)
+    {
+        var guild = (message.Channel as SocketGuildChannel)?.Guild;
+
+        if (guild == null)
+        {
+            return;
+        }
+
+        var anchorId = previousAnchorId ?? message.Id;
+
+        var entry = ChatGptSessionStore.FindByMessageId(anchorId)
+            ?? ChatGptSessionStore.Create(guild.Id, message.Channel.Id, anchorId);
+
+        var author = DiscordMentions.DisplayNameOf(message.Author);
+
+        BotLogger.LogAi(
+            BotLogger.ChatGptThreadKey,
+            "🎨 Просьба не механическая — отдаю модели в сессию {Id}: {Text}",
+            entry.Id,
+            text);
+
+        await entry.Lock.WaitAsync();
+
+        IUserMessage? sent;
+
+        try
+        {
+            using var typing = message.Channel.EnterTypingState();
+
+            sent = await ChatGptSessionHandler.RunTurnAsync(
+                message.Channel,
+                message.Id,
+                entry,
+                new ChatGptSessionHandler.TurnRequest(
+                    text,
+                    [new ChatGptClient.InputFile(fileName, image, MimeOf(fileName))],
+                    new ChatGptClient.ChatContext(guild.CurrentUser.DisplayName, author),
+                    new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase) { [author] = message.Author.Id }));
+        }
+        finally
+        {
+            entry.Lock.Release();
+        }
+
+        // Медиа-сессия переезжает на ответ модели, только если та прислала картинку:
+        // над текстовым ответом обрезать нечего, и тогда дальше разговор ведёт ChatGPT
+        if (sent is { Attachments.Count: > 0 })
+        {
+            MediaSessionStore.Remember(
+                sent.Id,
+                message.Channel.Id,
+                sent.Id,
+                MediaPlanParser.Serialize(new FfmpegRunner.MediaPlan()),
+                previousAnchorId);
+        }
+    }
+
+    private static string MimeOf(string fileName) => Path.GetExtension(fileName).ToLowerInvariant() switch
+    {
+        ".png" => "image/png",
+        ".webp" => "image/webp",
+        ".gif" => "image/gif",
+        _ => "image/jpeg"
+    };
 
     /// <summary>
     /// Переводит фразу в план. Размеры и длительность уходят в промпт: без них модель
