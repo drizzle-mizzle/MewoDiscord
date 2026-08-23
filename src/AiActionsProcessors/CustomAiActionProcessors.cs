@@ -27,6 +27,7 @@ public static class CustomAiActionProcessors
         new(StringComparer.OrdinalIgnoreCase)
         {
             ["convert_media"] = ConvertMedia.RunAsync,
+            ["download_video"] = DownloadVideo.RunAsync,
             ["edit_profile_picture"] = EditProfilePicture.RunAsync
         };
 

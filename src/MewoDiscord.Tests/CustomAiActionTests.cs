@@ -1,3 +1,4 @@
+using MewoDiscord.AiActionsProcessors;
 using MewoDiscord.Handlers;
 using MewoDiscord.Helpers;
 
@@ -93,8 +94,11 @@ public class CustomAiActionTests
         Assert.Equal(expected, CustomAiActionHandler.IsPositive(answer));
     }
 
-    [Fact]
-    public void Action_ФайлИзПоставкиВалиден()
+    [Theory]
+    [InlineData("edit_profile_picture", CustomAiActionGate.HasUserMention)]
+    [InlineData("convert_media", CustomAiActionGate.HasMediaAttached)]
+    [InlineData("download_video", CustomAiActionGate.HasYoutubeLink)]
+    public void Action_ФайлИзПоставкиВалиден(string id, CustomAiActionGate expectedGate)
     {
         var dir = AppDomain.CurrentDomain.BaseDirectory;
 
@@ -105,13 +109,16 @@ public class CustomAiActionTests
 
         Assert.NotNull(dir);
 
-        var path = Path.Combine(dir, "Files", "custom_ai_actions", "edit_profile_picture.ini");
+        var path = Path.Combine(dir, "Files", "custom_ai_actions", id + ".ini");
         Assert.True(File.Exists(path), $"нет файла действия: {path}");
 
-        var action = CustomAiActionStore.Parse("edit_profile_picture", File.ReadAllLines(path));
+        var action = CustomAiActionStore.Parse(id, File.ReadAllLines(path));
 
         Assert.NotNull(action);
-        Assert.Equal(CustomAiActionGate.HasUserMention, action.Gate);
+        Assert.Equal(expectedGate, action.Gate);
         Assert.Contains(CustomAiActionStore.MessagePlaceholder, action.HitPrompt);
+
+        // Действие без процессора пайп пропустит с предупреждением — а значит, молча
+        Assert.NotNull(CustomAiActionProcessors.Find(id));
     }
 }
