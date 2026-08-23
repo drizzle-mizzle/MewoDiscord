@@ -1,4 +1,3 @@
-using MewoDiscord.AiActionsProcessors;
 using MewoDiscord.Utils;
 
 namespace MewoDiscord.Tests;
@@ -11,8 +10,12 @@ public class FfmpegRunnerTests
 {
     private static readonly FfmpegRunner.MediaInfo Source = new(1920, 1080, 30);
 
-    private static string Args(FfmpegRunner.MediaPlan plan, string format = "mp4", FfmpegRunner.MediaInfo? info = null) =>
-        string.Join(' ', FfmpegRunner.BuildArguments(plan, info ?? Source, format, "in.mp4", "out." + format));
+    private static string Args(
+        FfmpegRunner.MediaPlan plan,
+        string format = "mp4",
+        FfmpegRunner.MediaInfo? info = null,
+        FfmpegRunner.MediaLimits? limits = null) =>
+        string.Join(' ', FfmpegRunner.BuildArguments(plan, info ?? Source, format, "in.mp4", "out." + format, limits));
 
     [Fact]
     public void Media_ОбрезкаПоВремениСчитаетсяДлительностью()
@@ -25,12 +28,27 @@ public class FfmpegRunnerTests
     }
 
     [Fact]
-    public void Media_ДлительностьРежетсяПоПотолку()
+    public void Media_ДлительностьГифкиРежетсяПоПотолку()
     {
-        var args = Args(new FfmpegRunner.MediaPlan(Start: 0, End: 300));
+        var args = Args(new FfmpegRunner.MediaPlan(Start: 0, End: 300), "gif");
 
-        Assert.Contains($"-t {FfmpegRunner.MaxOutputSeconds}", args);
+        Assert.Contains($"-t {FfmpegRunner.MaxGifSeconds}", args);
         Assert.DoesNotContain("-t 300", args);
+    }
+
+    [Fact]
+    public void Media_ДлинаСкачанногоВидеоНеРежется()
+    {
+        // Потолок гифки на скачанное видео не распространяется: «обрежь с 1:04 по 1:40» —
+        // это 36 секунд, и молча вернуть пятнадцать было бы враньём
+        var args = Args(
+            new FfmpegRunner.MediaPlan(Start: 64, End: 100),
+            "mp4",
+            new FfmpegRunner.MediaInfo(1920, 1080, 600),
+            FfmpegRunner.MediaLimits.Download("mp4", 600));
+
+        Assert.Contains("-ss 64", args);
+        Assert.Contains("-t 36", args);
     }
 
     [Fact]
@@ -61,11 +79,11 @@ public class FfmpegRunnerTests
     }
 
     [Fact]
-    public void Media_ШиринаНеПревышаетПотолок()
+    public void Media_ШиринаГифкиНеПревышаетПотолок()
     {
-        var args = Args(new FfmpegRunner.MediaPlan(Width: 4000));
+        var args = Args(new FfmpegRunner.MediaPlan(Width: 4000), "gif");
 
-        Assert.Contains($"scale={FfmpegRunner.MaxWidth}:-2", args);
+        Assert.Contains($"scale={FfmpegRunner.MaxGifWidth}:-2", args);
     }
 
     [Fact]
@@ -78,8 +96,95 @@ public class FfmpegRunnerTests
         Assert.Contains("paletteuse", args);
 
         // Частота задаётся всегда: исходные 60 fps раздувают гифку
-        Assert.Contains($"fps={FfmpegRunner.MaxFps}", args);
+        Assert.Contains($"fps={FfmpegRunner.MaxGifFps}", args);
         Assert.Contains("-an", args);
+    }
+
+    [Fact]
+    public void Media_ЧастотаКадровИдётПередМасштабированием()
+    {
+        // Иначе scale обрабатывает все шестьдесят кадров в секунду вместо пятнадцати
+        var args = Args(new FfmpegRunner.MediaPlan(Width: 320, Fps: 15));
+
+        var fps = args.IndexOf("fps=", StringComparison.Ordinal);
+        var scale = args.IndexOf("scale=", StringComparison.Ordinal);
+
+        Assert.True(fps >= 0 && scale > fps, $"fps должен идти перед scale: {args}");
+    }
+
+    [Fact]
+    public void Media_ЦветовоеПространствоПриводитсяКYuv420p()
+    {
+        // Десятибитный исходник с YouTube иначе даёт файл, который Discord показывает
+        // чёрным прямоугольником
+        Assert.Contains("-pix_fmt yuv420p", Args(new FfmpegRunner.MediaPlan(Width: 640)));
+        Assert.Contains("+faststart", Args(new FfmpegRunner.MediaPlan(Width: 640)));
+    }
+
+    [Fact]
+    public void Media_ЗвуковаяДорожкаВырезаетсяБезВидео()
+    {
+        var args = Args(new FfmpegRunner.MediaPlan(AudioOnly: true, Format: "mp3"), "mp3");
+
+        Assert.Contains("-vn", args);
+        Assert.Contains("-map 0:a:0", args);
+        Assert.Contains("libmp3lame", args);
+        Assert.DoesNotContain("-vf", args);
+    }
+
+    [Fact]
+    public void Media_РодныйКонтейнерЗвукаКопируетсяБезПерекодирования()
+    {
+        var withAac = new FfmpegRunner.MediaInfo(
+            0,
+            0,
+            30,
+            Audio: new FfmpegRunner.AudioStreamInfo("aac", 2, 44100, 128_000));
+
+        Assert.Equal("m4a", FfmpegRunner.ResolveAudioFormat(null, withAac.Audio));
+        Assert.Contains("-c:a copy", Args(new FfmpegRunner.MediaPlan(AudioOnly: true), "m4a", withAac));
+
+        // Формат вне белого списка не проходит: имя уходит в аргументы и в имя файла
+        Assert.Null(FfmpegRunner.ResolveAudioFormat("wav", withAac.Audio));
+    }
+
+    [Fact]
+    public void Media_ПережатиеБезИзмененийКопируетПотоки()
+    {
+        var args = string.Join(
+            ' ',
+            FfmpegRunner.BuildEncodeArguments(
+                new FfmpegRunner.EncodeSettings(CopyStreams: true),
+                new FfmpegRunner.MediaPlan(),
+                Source,
+                "mp4",
+                "in.mp4",
+                "out.mp4"));
+
+        Assert.Contains("-c copy", args);
+        Assert.DoesNotContain("libx264", args);
+    }
+
+    [Fact]
+    public void Media_ПережатиеВидеоЦелитсяВБитрейт()
+    {
+        var args = string.Join(
+            ' ',
+            FfmpegRunner.BuildEncodeArguments(
+                new FfmpegRunner.EncodeSettings(1_500_000, 96_000, 1280, 720, 30),
+                new FfmpegRunner.MediaPlan(),
+                Source,
+                "mp4",
+                "in.mp4",
+                "out.mp4"));
+
+        Assert.Contains("-b:v 1500000", args);
+        Assert.Contains("-b:a 96000", args);
+        Assert.Contains("scale=1280:720", args);
+        Assert.Contains("fps=30", args);
+
+        // Круг сжатия всегда читает исходник, а не результат прошлого круга
+        Assert.Contains("-i in.mp4", args);
     }
 
     [Fact]
@@ -106,7 +211,7 @@ public class FfmpegRunnerTests
     [Fact]
     public void Media_ПланРазбираетсяИзОтветаМодели()
     {
-        var plan = ConvertMedia.ParsePlan("""
+        var plan = MediaPlanParser.Parse("""
             ```json
             {"format":"gif","start":2,"end":6,"crop":{"x":10,"y":20,"w":300,"h":200},"width":480,"fps":15}
             ```
@@ -125,7 +230,7 @@ public class FfmpegRunnerTests
     [Fact]
     public void Media_ЧислаСтрокойТожеПонимаются()
     {
-        var plan = ConvertMedia.ParsePlan("""{"start":"1.5","width":"320"}""");
+        var plan = MediaPlanParser.Parse("""{"start":"1.5","width":"320"}""");
 
         Assert.NotNull(plan);
         Assert.Equal(1.5, plan.Start);
@@ -133,12 +238,32 @@ public class FfmpegRunnerTests
     }
 
     [Fact]
+    public void Media_ЗвуковойПланУзнаётся()
+    {
+        Assert.True(MediaPlanParser.Parse("""{"audio":true}""")!.AudioOnly);
+        Assert.True(MediaPlanParser.Parse("""{"audio":"true"}""")!.AudioOnly);
+        Assert.False(MediaPlanParser.Parse("""{"audio":false}""")!.AudioOnly);
+        Assert.False(MediaPlanParser.Parse("{}")!.AudioOnly);
+    }
+
+    [Fact]
+    public void Media_ТолькоОбрезкаОтличаетсяОтОстальныхПланов()
+    {
+        // Такой план умеет выполнить сам yt-dlp, скачав один отрезок
+        Assert.True(new FfmpegRunner.MediaPlan(Start: 5, End: 10).IsTrimOnly);
+        Assert.False(new FfmpegRunner.MediaPlan(Start: 5, End: 10, Format: "gif").IsTrimOnly);
+        Assert.False(new FfmpegRunner.MediaPlan(Start: 5, AudioOnly: true).IsTrimOnly);
+        Assert.False(new FfmpegRunner.MediaPlan().IsTrimOnly);
+    }
+
+    [Fact]
     public void Media_ПустойИлиБитыйПланНеВыполняется()
     {
-        Assert.True(ConvertMedia.ParsePlan("{}")!.IsEmpty);
-        Assert.Null(ConvertMedia.ParsePlan("не понял, о чём речь"));
-        Assert.Null(ConvertMedia.ParsePlan("{битый json"));
+        Assert.True(MediaPlanParser.Parse("{}")!.IsEmpty);
+        Assert.Null(MediaPlanParser.Parse("не понял, о чём речь"));
+        Assert.Null(MediaPlanParser.Parse("{битый json"));
         Assert.False(new FfmpegRunner.MediaPlan(Format: "gif").IsEmpty);
+        Assert.False(new FfmpegRunner.MediaPlan(AudioOnly: true).IsEmpty);
     }
 
     [Fact]
@@ -153,7 +278,67 @@ public class FfmpegRunnerTests
         Assert.Equal(480, info.Height);
         Assert.Equal(12.5, info.DurationSeconds);
 
-        // Видеопотока нет — значит это не то, с чем мы работаем
+        // Ни видео, ни звука — значит это не то, с чем мы работаем
         Assert.Null(FfmpegRunner.ParseProbe("""{"streams":[]}"""));
+    }
+
+    [Fact]
+    public void Media_ПотокиЧитаютсяИзОтветаFfprobe()
+    {
+        var info = FfmpegRunner.ParseProbe("""
+            {"streams":[
+              {"codec_type":"video","codec_name":"h264","width":1920,"height":1080,
+               "avg_frame_rate":"30000/1001","bit_rate":"4500000"},
+              {"codec_type":"audio","codec_name":"aac","channels":2,"sample_rate":"44100","bit_rate":"128000"}],
+             "format":{"duration":"61.5","bit_rate":"4628000","format_name":"mov,mp4,m4a","size":"35000000"}}
+            """);
+
+        Assert.NotNull(info);
+        Assert.NotNull(info.Video);
+        Assert.Equal("h264", info.Video.Codec);
+        Assert.Equal(4_500_000, info.Video.BitrateBps);
+
+        // Частота приезжает рациональной строкой
+        Assert.Equal(29.97, info.Video.Fps, 2);
+
+        Assert.NotNull(info.Audio);
+        Assert.Equal("aac", info.Audio.Codec);
+        Assert.Equal(2, info.Audio.Channels);
+        Assert.Equal(128_000, info.Audio.BitrateBps);
+        Assert.Equal(35_000_000, info.SizeBytes);
+    }
+
+    [Fact]
+    public void Media_ОбложкаЗвуковогоФайлаНеСчитаетсяВидео()
+    {
+        // У mp3 с обложкой ffprobe показывает видеопоток, но кадров в нём нет
+        var info = FfmpegRunner.ParseProbe("""
+            {"streams":[
+              {"codec_type":"video","codec_name":"mjpeg","width":600,"height":600,"avg_frame_rate":"0/0"},
+              {"codec_type":"audio","codec_name":"mp3","channels":2,"sample_rate":"44100","bit_rate":"192000"}],
+             "format":{"duration":"180.0","format_name":"mp3","size":"4320000"}}
+            """);
+
+        Assert.NotNull(info);
+        Assert.Null(info.Video);
+        Assert.NotNull(info.Audio);
+        Assert.Equal(0, info.Width);
+    }
+
+    [Fact]
+    public void Media_БитрейтВидеоДостаётсяИзКонтейнераЕслиЕгоНетУПотока()
+    {
+        var info = FfmpegRunner.ParseProbe("""
+            {"streams":[
+              {"codec_type":"video","codec_name":"vp9","width":1280,"height":720,"avg_frame_rate":"30/1"},
+              {"codec_type":"audio","codec_name":"opus","channels":2,"sample_rate":"48000","bit_rate":"128000"}],
+             "format":{"duration":"100.0","format_name":"matroska,webm","size":"12500000"}}
+            """);
+
+        Assert.NotNull(info);
+        Assert.NotNull(info.Video);
+
+        // 12 500 000 байт за 100 секунд — это миллион бит/с всего, минус звук
+        Assert.Equal(872_000, info.Video.BitrateBps);
     }
 }

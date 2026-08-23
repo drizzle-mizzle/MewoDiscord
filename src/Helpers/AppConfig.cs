@@ -49,6 +49,69 @@ public static class AppConfig
 
     public static ChatGptSectionConfig ChatGptSettings { get; } = new("CHATGPT_SETTINGS");
 
+    public static MediaSectionConfig MediaSettings { get; } = new("MEDIA");
+
+    /// <summary>
+    /// Типизированная секция работы с медиа: где рабочий каталог, сколько ему позволено
+    /// занять и чем качать. Пути к ffmpeg и ffprobe остались в COMMON — их уже ищут там
+    /// существующие конфиги, и ломать их ради красоты не стоит.
+    /// </summary>
+    public record MediaSectionConfig(string SectionName)
+    {
+        public string YtDlpPath => Get(SectionName, nameof(YtDlpPath), "yt-dlp");
+
+        /// <summary>
+        /// Рабочий каталог yt-dlp и ffmpeg. Пусто — временный каталог системы;
+        /// в Docker сюда монтируется отдельный том, потому что временный каталог
+        /// контейнера — это его writable-слой, и двухгигабайтное видео растит его молча.
+        /// </summary>
+        public string WorkDirectory
+        {
+            get
+            {
+                var value = Get(SectionName, nameof(WorkDirectory));
+
+                return value.Length > 0 ? value : Path.Combine(Path.GetTempPath(), "mewo-media");
+            }
+        }
+
+        /// <summary>
+        /// Потолок на рабочий каталог, МБ: исходник плюс артефакты пережатия.
+        /// Настоящего предела у тома нет (обычному тому Docker размер не задать),
+        /// поэтому держит его сам бот — см. MediaWorkspace.
+        /// </summary>
+        public int BudgetMb => GetInt(SectionName, nameof(BudgetMb), 3800);
+
+        /// <summary>
+        /// Потолок на скачиваемый исходник, МБ.
+        /// </summary>
+        public int MaxSourceMb => GetInt(SectionName, nameof(MaxSourceMb), 2048);
+
+        /// <summary>
+        /// Максимальная длительность видео, минут: слот держится всю операцию,
+        /// и многочасовой ролик занял бы бота целиком.
+        /// </summary>
+        public int MaxDurationMinutes => GetInt(SectionName, nameof(MaxDurationMinutes), 60);
+
+        public int DownloadTimeoutMinutes => GetInt(SectionName, nameof(DownloadTimeoutMinutes), 30);
+
+        public int EncodeTimeoutMinutes => GetInt(SectionName, nameof(EncodeTimeoutMinutes), 20);
+
+        /// <summary>
+        /// Файл кук YouTube в формате Netscape. Пусто — работаем без него.
+        /// Нужен, когда YouTube начинает требовать «подтвердите, что вы не робот».
+        /// </summary>
+        public string YoutubeCookiesFile => Get(SectionName, nameof(YoutubeCookiesFile));
+
+        /// <summary>
+        /// Дополнительные аргументы yt-dlp, разбиваются по пробелам. Осознанное исключение
+        /// из правила «командную строку собирает код»: пишет их администратор в своём
+        /// config.ini, и чинить обход антибот-проверки приходится быстрее, чем выходит
+        /// новая сборка. Модель сюда не пишет ничего.
+        /// </summary>
+        public string YtDlpExtraArgs => Get(SectionName, nameof(YtDlpExtraArgs));
+    }
+
     /// <summary>
     /// Типизированная секция настроек ChatGPT. Параметров изображений здесь нет —
     /// картинки рисует сама модель по ходу диалога, как в веб-интерфейсе.

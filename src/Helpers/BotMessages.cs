@@ -155,6 +155,71 @@ public static class BotMessages
     public static string MediaFailed() =>
         Format(nameof(MediaFailed));
 
+    public static string MediaBusy() =>
+        Format(nameof(MediaBusy));
+
+    public static string MediaShrinkFailed(string limit) =>
+        Format(nameof(MediaShrinkFailed), ("{limit}", limit));
+
+    public static string MediaGifTooHeavy() =>
+        Format(nameof(MediaGifTooHeavy));
+
+    public static string MediaPlanUnclearVideo() =>
+        Format(nameof(MediaPlanUnclearVideo));
+
+    public static string YoutubeDownloading(string quality) =>
+        Format(nameof(YoutubeDownloading), ("{quality}", quality));
+
+    public static string YoutubeMeta(string container, string resolution, string video, string audio) =>
+        Format(
+            nameof(YoutubeMeta),
+            ("{container}", container),
+            ("{resolution}", resolution),
+            ("{video}", video),
+            ("{audio}", audio));
+
+    public static string YoutubeNoAudio() =>
+        Format(nameof(YoutubeNoAudio));
+
+    public static string YoutubeQualityReduced(string quality, string best) =>
+        Format(nameof(YoutubeQualityReduced), ("{quality}", quality), ("{best}", best));
+
+    public static string YoutubeRecompressed(string limit) =>
+        Format(nameof(YoutubeRecompressed), ("{limit}", limit));
+
+    public static string YoutubeTooBig(string size) =>
+        Format(nameof(YoutubeTooBig), ("{size}", size));
+
+    public static string YoutubeTooLong(string duration, string limit) =>
+        Format(nameof(YoutubeTooLong), ("{duration}", duration), ("{limit}", limit));
+
+    public static string YoutubeLive() =>
+        Format(nameof(YoutubeLive));
+
+    public static string YoutubeAgeRestricted() =>
+        Format(nameof(YoutubeAgeRestricted));
+
+    public static string YoutubeBotCheck() =>
+        Format(nameof(YoutubeBotCheck));
+
+    public static string YoutubePrivate() =>
+        Format(nameof(YoutubePrivate));
+
+    public static string YoutubeGeoBlocked() =>
+        Format(nameof(YoutubeGeoBlocked));
+
+    public static string YoutubeUnavailable() =>
+        Format(nameof(YoutubeUnavailable));
+
+    public static string YoutubeToolOutdated() =>
+        Format(nameof(YoutubeToolOutdated));
+
+    public static string YoutubeNoRoom() =>
+        Format(nameof(YoutubeNoRoom));
+
+    public static string YoutubeFailed() =>
+        Format(nameof(YoutubeFailed));
+
     #region Internals
 
     private static readonly string MessagesPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Files", "messages.ini");

@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 
@@ -7,53 +6,75 @@ using MewoDiscord.Helpers;
 namespace MewoDiscord.Utils;
 
 /// <summary>
-/// Запуск ffmpeg над файлом из чата. Модель сюда не пишет ни строчки командной строки:
+/// Запуск ffmpeg над файлом. Модель сюда не пишет ни строчки командной строки:
 /// она отдаёт типизированный план (<see cref="MediaPlan"/>), а аргументы собирает код
 /// из белого списка операций — иначе это было бы выполнение произвольных команд из вывода ИИ.
-/// Операции нарочно простые: формат, обрезка по времени, кроп, размер, частота кадров.
-/// Задачи выполняются по одной и с потолками: сервер маленький, и неограниченная
-/// конвертация длинного видео способна его занять целиком.
+/// Операции нарочно простые: формат, обрезка по времени, кроп, размер, частота кадров,
+/// вытаскивание звуковой дорожки.
+/// Работа идёт по путям, а не по байтам: скачанное видео бывает на два гигабайта,
+/// и держать его в памяти нельзя. Рабочий каталог приезжает
+/// <see cref="MediaWorkspace"/> — он же доказывает, что вызывающий занял слот:
+/// свободно плодить ffmpeg-процессы на маленьком сервере нельзя.
 /// </summary>
 public static class FfmpegRunner
 {
     /// <summary>
-    /// Максимальная длительность результата. Гифке в чат больше не нужно, а каждая
-    /// лишняя секунда — это кадры, которые кто-то должен пережать.
+    /// Максимальная длительность гифки. Больше в чат не нужно, а каждая лишняя
+    /// секунда — это кадры, которые кто-то должен пережать.
     /// </summary>
-    internal const double MaxOutputSeconds = 15;
+    internal const double MaxGifSeconds = 15;
 
     /// <summary>
-    /// Максимальная ширина результата в пикселях.
+    /// Максимальная ширина гифки в пикселях.
     /// </summary>
-    internal const int MaxWidth = 640;
+    internal const int MaxGifWidth = 640;
 
     /// <summary>
-    /// Максимальная частота кадров результата.
+    /// Максимальная частота кадров гифки.
     /// </summary>
-    internal const int MaxFps = 20;
+    internal const int MaxGifFps = 20;
 
     /// <summary>
-    /// Потолок входного файла. Совпадает с обычным лимитом вложений Discord —
+    /// Потолки для клипа, собранного из вложения в чате: обрезка присланного файла —
+    /// операция на секунды, а не на минуты.
+    /// </summary>
+    internal const double MaxClipSeconds = 300;
+
+    internal const int MaxClipWidth = 1280;
+
+    internal const int MaxClipFps = 30;
+
+    /// <summary>
+    /// Потолки для скачанного видео: длину задаёт пользователь, ограничивает
+    /// не время, а размер файла, поэтому по времени потолка нет — только по картинке.
+    /// </summary>
+    internal const int MaxDownloadWidth = 1920;
+
+    internal const int MaxDownloadFps = 60;
+
+    /// <summary>
+    /// Потолок входного файла из чата. Совпадает с обычным лимитом вложений Discord —
     /// больше к нам всё равно не приедет.
     /// </summary>
     internal const int MaxInputBytes = 25 * 1024 * 1024;
 
     /// <summary>
-    /// Сколько ждать процесс, прежде чем счесть его зависшим и убить.
+    /// Сколько ждать ffprobe: он только читает заголовки.
     /// </summary>
-    private const int ProcessTimeoutSeconds = 60;
+    private const int ProbeTimeoutSeconds = 60;
 
     /// <summary>
-    /// Форматы, в которые разрешено конвертировать. Белый список, а не проверка на «плохое»:
-    /// имя формата уходит в аргументы, и гадать о безопасности неизвестного не хочется.
+    /// Форматы, в которые разрешено конвертировать. Белый список, а не проверка
+    /// на «плохое»: имя формата уходит в аргументы и в имя файла, и гадать
+    /// о безопасности неизвестного не хочется.
     /// </summary>
     internal static readonly string[] AllowedFormats = ["gif", "mp4", "webm", "png", "jpg", "webp"];
 
     /// <summary>
-    /// Конвертации идут по одной: параллельный ffmpeg — самый быстрый способ
-    /// положить маленький сервер.
+    /// Форматы звуковой дорожки. Отдельным списком, а не вместе с остальными:
+    /// иначе «сконвертируй картинку в mp3» прошло бы проверку.
     /// </summary>
-    private static readonly SemaphoreSlim Slot = new(1, 1);
+    internal static readonly string[] AllowedAudioFormats = ["mp3", "m4a", "opus", "ogg"];
 
     /// <summary>
     /// План операции. Все поля необязательны: чего нет — того не делаем.
@@ -65,55 +86,187 @@ public static class FfmpegRunner
         double? End = null,
         CropBox? Crop = null,
         int? Width = null,
-        int? Fps = null)
+        int? Fps = null,
+        bool AudioOnly = false)
     {
         /// <summary>
         /// Есть ли в плане хоть одна операция: пустой план выполнять бессмысленно.
         /// </summary>
-        public bool IsEmpty => Format == null && Start == null && End == null && Crop == null && Width == null && Fps == null;
+        public bool IsEmpty => Format == null && Start == null && End == null
+            && Crop == null && Width == null && Fps == null && !AudioOnly;
+
+        /// <summary>
+        /// Нужна ли только обрезка по времени. Такой план умеет выполнить сам yt-dlp,
+        /// скачав один отрезок вместо целого видео, — и тогда ffmpeg не нужен вовсе.
+        /// </summary>
+        public bool IsTrimOnly => (Start != null || End != null)
+            && Format == null && Crop == null && Width == null && Fps == null && !AudioOnly;
     }
 
     public record CropBox(int X, int Y, int Width, int Height);
 
     /// <summary>
-    /// Размеры и длительность исходника — нужны и для кропа, и для проверки лимитов.
+    /// Параметры видеодорожки для мета-подписи и математики пережатия.
     /// </summary>
-    public record MediaInfo(int Width, int Height, double DurationSeconds);
+    public record VideoStreamInfo(string Codec, int Width, int Height, double Fps, long BitrateBps);
 
     /// <summary>
-    /// Результат: готовый файл либо причина отказа для пользователя.
+    /// Параметры звуковой дорожки.
     /// </summary>
-    public record MediaResult(byte[]? Content, string? FileName, string? Error);
+    public record AudioStreamInfo(string Codec, int Channels, int SampleRate, long BitrateBps);
 
     /// <summary>
-    /// Выполняет план над файлом. Ошибки не бросаются: наружу едет причина отказа.
+    /// Размеры, длительность и параметры дорожек. Width, Height и DurationSeconds
+    /// продублированы наверху записи намеренно: по ним считается кроп, и они должны
+    /// оставаться доступными, когда видеодорожки нет вовсе (файл со звуком).
     /// </summary>
-    public static async Task<MediaResult> RunAsync(byte[] input, string inputFileName, MediaPlan plan, MediaInfo info)
+    public record MediaInfo(
+        int Width,
+        int Height,
+        double DurationSeconds,
+        VideoStreamInfo? Video = null,
+        AudioStreamInfo? Audio = null,
+        long SizeBytes = 0,
+        string? ContainerName = null);
+
+    /// <summary>
+    /// Потолки одной операции. У гифки они жёстче, чем у клипа, а у скачанного видео
+    /// длину задаёт пользователь — режет не время, а лимит вложения.
+    /// </summary>
+    public record MediaLimits(double MaxSeconds, int MaxWidth, int MaxFps)
     {
-        var format = ResolveFormat(plan.Format, inputFileName, info.DurationSeconds > 0);
+        /// <summary>
+        /// Потолки для файла, присланного в чат.
+        /// </summary>
+        public static MediaLimits Chat(string format) => format == "gif"
+            ? new MediaLimits(MaxGifSeconds, MaxGifWidth, MaxGifFps)
+            : new MediaLimits(MaxClipSeconds, MaxClipWidth, MaxClipFps);
+
+        /// <summary>
+        /// Потолки для скачанного видео: по времени — сколько есть в исходнике.
+        /// </summary>
+        public static MediaLimits Download(string format, double sourceSeconds) => format == "gif"
+            ? new MediaLimits(MaxGifSeconds, MaxGifWidth, MaxGifFps)
+            : new MediaLimits(Math.Max(sourceSeconds, 1), MaxDownloadWidth, MaxDownloadFps);
+    }
+
+    /// <summary>
+    /// Параметры пережатия под заданный размер. Какие поля значимы — зависит от формата:
+    /// у видео это битрейты и разрешение, у гифки — ширина, кадры и палитра,
+    /// у звука — битрейт и каналы. Считает их <see cref="MediaShrink"/>.
+    /// </summary>
+    public record EncodeSettings(
+        long VideoBitrateBps = 0,
+        long AudioBitrateBps = 0,
+        int Width = 0,
+        int Height = 0,
+        int Fps = 0,
+        int Colors = 0,
+        int Channels = 2,
+        bool CopyStreams = false);
+
+    /// <summary>
+    /// Результат — путь к файлу внутри рабочего каталога либо причина отказа
+    /// для пользователя. Ошибки наружу не бросаются.
+    /// </summary>
+    public record MediaResult(string? FilePath, string? FileName, string? Error);
+
+    /// <summary>
+    /// Выполняет план над файлом. Имя результата строится от displayName —
+    /// это имя, которое увидит пользователь, а не путь на диске.
+    /// </summary>
+    public static async Task<MediaResult> RunAsync(
+        MediaWorkspace workspace,
+        string inputPath,
+        string displayName,
+        MediaPlan plan,
+        MediaInfo info,
+        MediaLimits? limits = null)
+    {
+        var format = plan.AudioOnly
+            ? ResolveAudioFormat(plan.Format, info.Audio)
+            : ResolveFormat(plan.Format, displayName, info.DurationSeconds > 0);
 
         if (format == null)
         {
             return new MediaResult(null, null, BotMessages.MediaFormatNotSupported(plan.Format ?? "?"));
         }
 
-        var workDirectory = Path.Combine(Path.GetTempPath(), "mewo-media", Guid.NewGuid().ToString("N"));
-        var inputPath = Path.Combine(workDirectory, "in" + Path.GetExtension(inputFileName));
-        var outputPath = Path.Combine(workDirectory, "out." + format);
+        var outputPath = workspace.PathFor("result." + format);
+        var arguments = BuildArguments(plan, info, format, inputPath, outputPath, limits);
 
-        await Slot.WaitAsync();
+        return await ExecuteAsync(workspace, arguments, outputPath, displayName, format);
+    }
 
+    /// <summary>
+    /// Пережимает файл под заданные параметры. От <see cref="RunAsync"/> отличается тем,
+    /// что параметры кодирования посчитаны заранее, а не выведены из плана: круг сжатия
+    /// целится в конкретный размер. Выходной путь задаёт вызывающий — он же нумерует круги.
+    /// </summary>
+    public static async Task<MediaResult> EncodeAsync(
+        MediaWorkspace workspace,
+        string inputPath,
+        string outputPath,
+        string format,
+        EncodeSettings settings,
+        MediaPlan plan,
+        MediaInfo info,
+        string displayName)
+    {
+        var arguments = BuildEncodeArguments(settings, plan, info, format, inputPath, outputPath);
+
+        return await ExecuteAsync(workspace, arguments, outputPath, displayName, format);
+    }
+
+    /// <summary>
+    /// Спрашивает у ffprobe размеры, длительность и параметры дорожек.
+    /// null — файл не читается как медиа.
+    /// </summary>
+    public static async Task<MediaInfo?> ProbeAsync(string path)
+    {
         try
         {
-            Directory.CreateDirectory(workDirectory);
-            await File.WriteAllBytesAsync(inputPath, input);
+            var result = await ProcessRunner.RunAsync(
+                AppConfig.FfprobePath,
+                [
+                    "-v", "error",
+                    "-show_entries",
+                    "stream=index,codec_type,codec_name,width,height,avg_frame_rate,r_frame_rate,bit_rate,channels,sample_rate"
+                        + ":format=duration,bit_rate,format_name,size",
+                    "-of", "json",
+                    path
+                ],
+                TimeSpan.FromSeconds(ProbeTimeoutSeconds));
 
-            var arguments = BuildArguments(plan, info, format, inputPath, outputPath);
-            var error = await ExecuteAsync(AppConfig.FfmpegPath, arguments);
+            return result.Ok ? ParseProbe(result.StandardOutput) : null;
+        }
+        catch (Exception ex)
+        {
+            BotLogger.Warning("ffprobe не смог прочитать файл: {Message}", ex.Message);
+            return null;
+        }
+    }
 
-            if (error != null)
+    #region Internals
+
+    private static async Task<MediaResult> ExecuteAsync(
+        MediaWorkspace workspace,
+        IReadOnlyList<string> arguments,
+        string outputPath,
+        string displayName,
+        string format)
+    {
+        try
+        {
+            var timeout = TimeSpan.FromMinutes(AppConfig.MediaSettings.EncodeTimeoutMinutes);
+            var result = await ProcessRunner.RunAsync(AppConfig.FfmpegPath, arguments, timeout, workspace.FullPath);
+
+            if (!result.Ok)
             {
-                BotLogger.Warning("ffmpeg не справился: {Error}", error);
+                BotLogger.Warning(
+                    "ffmpeg не справился: {Error}",
+                    result.TimedOut ? "процесс не уложился в отведённое время" : result.StandardError.Trim());
+
                 return new MediaResult(null, null, BotMessages.MediaFailed());
             }
 
@@ -122,96 +275,175 @@ public static class FfmpegRunner
                 return new MediaResult(null, null, BotMessages.MediaFailed());
             }
 
-            var content = await File.ReadAllBytesAsync(outputPath);
-
-            return new MediaResult(content, Path.GetFileNameWithoutExtension(inputFileName) + "." + format, null);
+            return new MediaResult(outputPath, Path.GetFileNameWithoutExtension(displayName) + "." + format, null);
         }
         catch (Exception ex)
         {
-            BotLogger.Error("Ошибка конвертации медиа: {Message}", ex.Message);
+            BotLogger.Error("Ошибка обработки медиа: {Message}", ex.Message);
             return new MediaResult(null, null, BotMessages.MediaFailed());
         }
-        finally
-        {
-            Slot.Release();
-            Cleanup(workDirectory);
-        }
     }
 
     /// <summary>
-    /// Спрашивает у ffprobe размеры и длительность. null — файл не читается как медиа.
-    /// </summary>
-    public static async Task<MediaInfo?> ProbeAsync(byte[] input, string inputFileName)
-    {
-        var workDirectory = Path.Combine(Path.GetTempPath(), "mewo-media", Guid.NewGuid().ToString("N"));
-        var inputPath = Path.Combine(workDirectory, "in" + Path.GetExtension(inputFileName));
-
-        try
-        {
-            Directory.CreateDirectory(workDirectory);
-            await File.WriteAllBytesAsync(inputPath, input);
-
-            var output = await ReadOutputAsync(AppConfig.FfprobePath,
-            [
-                "-v", "error",
-                "-select_streams", "v:0",
-                "-show_entries", "stream=width,height",
-                "-show_entries", "format=duration",
-                "-of", "json",
-                inputPath
-            ]);
-
-            return output == null ? null : ParseProbe(output);
-        }
-        catch (Exception ex)
-        {
-            BotLogger.Warning("ffprobe не смог прочитать файл: {Message}", ex.Message);
-            return null;
-        }
-        finally
-        {
-            Cleanup(workDirectory);
-        }
-    }
-
-    #region Internals
-
-    /// <summary>
-    /// Разбирает json от ffprobe. null — размеров нет, значит это не видео и не картинка.
+    /// Разбирает json от ffprobe. null — нет ни видео-, ни звуковой дорожки,
+    /// значит это не то, с чем мы работаем.
     /// </summary>
     internal static MediaInfo? ParseProbe(string json)
     {
         try
         {
             using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
 
-            if (!document.RootElement.TryGetProperty("streams", out var streams) || streams.GetArrayLength() == 0)
-            {
-                return null;
-            }
-
-            var stream = streams[0];
-
-            if (!stream.TryGetProperty("width", out var width) || !stream.TryGetProperty("height", out var height))
+            if (!root.TryGetProperty("streams", out var streams) || streams.ValueKind != JsonValueKind.Array)
             {
                 return null;
             }
 
             var duration = 0d;
+            var containerBitrate = 0L;
+            var size = 0L;
+            string? container = null;
 
-            if (document.RootElement.TryGetProperty("format", out var format)
-                && format.TryGetProperty("duration", out var durationValue)
-                && double.TryParse(durationValue.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed))
+            if (root.TryGetProperty("format", out var format))
             {
-                duration = parsed;
+                duration = ReadNumber(format, "duration");
+                containerBitrate = (long)ReadNumber(format, "bit_rate");
+                size = (long)ReadNumber(format, "size");
+                container = ReadText(format, "format_name");
             }
 
-            return new MediaInfo(width.GetInt32(), height.GetInt32(), duration);
+            VideoStreamInfo? video = null;
+            AudioStreamInfo? audio = null;
+
+            foreach (var stream in streams.EnumerateArray())
+            {
+                var type = ReadText(stream, "codec_type");
+
+                if (video == null && IsVideoStream(stream, type))
+                {
+                    video = ReadVideo(stream);
+                }
+                else if (audio == null && type == "audio")
+                {
+                    audio = ReadAudio(stream);
+                }
+            }
+
+            if (video == null && audio == null)
+            {
+                return null;
+            }
+
+            // Битрейт дорожки часто отсутствует (webm, matroska) — тогда считаем
+            // от контейнера, а в последнюю очередь от размера файла
+            if (containerBitrate == 0 && size > 0 && duration > 0)
+            {
+                containerBitrate = (long)(size * 8 / duration);
+            }
+
+            if (video is { BitrateBps: 0 } && containerBitrate > 0)
+            {
+                video = video with { BitrateBps = Math.Max(containerBitrate - (audio?.BitrateBps ?? 0), 0) };
+            }
+
+            return new MediaInfo(
+                video?.Width ?? 0,
+                video?.Height ?? 0,
+                duration,
+                video,
+                audio,
+                size,
+                container);
         }
         catch (JsonException)
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// Видеодорожка ли это. Обложка mp3 тоже приезжает видеопотоком, но её частота
+    /// кадров нулевая — это картинка, а не дорожка, и считать файл видео из-за неё нельзя.
+    /// Поток без codec_type, но с размерами, считается видео: так выглядит ответ
+    /// урезанного запроса к ffprobe.
+    /// </summary>
+    private static bool IsVideoStream(JsonElement stream, string? type)
+    {
+        var hasSize = stream.TryGetProperty("width", out _) && stream.TryGetProperty("height", out _);
+
+        if (type == null)
+        {
+            return hasSize;
+        }
+
+        return type == "video" && hasSize && ReadFrameRate(stream) > 0;
+    }
+
+    private static VideoStreamInfo ReadVideo(JsonElement stream) => new(
+        ReadText(stream, "codec_name") ?? "?",
+        (int)ReadNumber(stream, "width"),
+        (int)ReadNumber(stream, "height"),
+        ReadFrameRate(stream),
+        (long)ReadNumber(stream, "bit_rate"));
+
+    private static AudioStreamInfo ReadAudio(JsonElement stream) => new(
+        ReadText(stream, "codec_name") ?? "?",
+        (int)ReadNumber(stream, "channels"),
+        (int)ReadNumber(stream, "sample_rate"),
+        (long)ReadNumber(stream, "bit_rate"));
+
+    /// <summary>
+    /// Частота кадров приезжает рациональной строкой вида «30000/1001».
+    /// «0/0» означает, что кадров нет вовсе.
+    /// </summary>
+    private static double ReadFrameRate(JsonElement stream)
+    {
+        var value = ReadText(stream, "avg_frame_rate") ?? ReadText(stream, "r_frame_rate");
+
+        if (value == null)
+        {
+            // Урезанный ответ ffprobe без частоты кадров: считаем, что она есть
+            return stream.TryGetProperty("width", out _) ? 1 : 0;
+        }
+
+        var parts = value.Split('/');
+
+        if (parts.Length != 2
+            || !double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var numerator)
+            || !double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var denominator)
+            || denominator == 0)
+        {
+            return 0;
+        }
+
+        return numerator / denominator;
+    }
+
+    private static string? ReadText(JsonElement element, string name) =>
+        element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
+
+    /// <summary>
+    /// Число из ответа ffprobe: часть полей приезжает строками, часть — числами.
+    /// </summary>
+    private static double ReadNumber(JsonElement element, string name)
+    {
+        if (!element.TryGetProperty(name, out var value))
+        {
+            return 0;
+        }
+
+        if (value.ValueKind == JsonValueKind.Number)
+        {
+            return value.GetDouble();
+        }
+
+        return value.ValueKind == JsonValueKind.String
+            && double.TryParse(value.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
+                ? parsed
+                : 0;
     }
 
     /// <summary>
@@ -234,6 +466,34 @@ public static class FfmpegRunner
         return AllowedFormats.Contains(original) ? original : animated ? "mp4" : "png";
     }
 
+    /// <summary>
+    /// Формат звуковой дорожки. Не просили конкретный — берём родной контейнер кодека:
+    /// тогда дорожку можно скопировать без перекодирования, а это и быстрее, и без потерь.
+    /// </summary>
+    internal static string? ResolveAudioFormat(string? requested, AudioStreamInfo? audio)
+    {
+        if (!string.IsNullOrWhiteSpace(requested))
+        {
+            var wanted = Normalize(requested);
+
+            return AllowedAudioFormats.Contains(wanted) ? wanted : null;
+        }
+
+        return NativeContainer(audio?.Codec) ?? "mp3";
+    }
+
+    /// <summary>
+    /// Контейнер, в который дорожку можно положить как есть.
+    /// </summary>
+    private static string? NativeContainer(string? codec) => codec?.ToLowerInvariant() switch
+    {
+        "aac" => "m4a",
+        "opus" => "opus",
+        "vorbis" => "ogg",
+        "mp3" => "mp3",
+        _ => null
+    };
+
     private static string Normalize(string format)
     {
         var normalized = format.Trim().ToLowerInvariant();
@@ -243,13 +503,146 @@ public static class FfmpegRunner
 
     /// <summary>
     /// Собирает аргументы ffmpeg из плана. Всё, что приходит от модели, зажимается
-    /// в лимиты здесь: план — это пожелание, а не команда.
-    /// Для gif строится палитра (palettegen/paletteuse) — без неё цвета получаются грязными.
+    /// в потолки здесь: план — это пожелание, а не команда.
     /// </summary>
-    internal static List<string> BuildArguments(MediaPlan plan, MediaInfo info, string format, string inputPath, string outputPath)
+    internal static List<string> BuildArguments(
+        MediaPlan plan,
+        MediaInfo info,
+        string format,
+        string inputPath,
+        string outputPath,
+        MediaLimits? limits = null)
+    {
+        var caps = limits ?? MediaLimits.Chat(format);
+        var arguments = OpenInput(plan, info, inputPath, caps.MaxSeconds);
+
+        if (AllowedAudioFormats.Contains(format))
+        {
+            AppendAudioOnly(arguments, format, info, bitrateBps: 0, channels: 0);
+        }
+        else if (format == "gif")
+        {
+            AppendGif(arguments, BuildFilters(plan, info, format, caps), colors: 0);
+        }
+        else
+        {
+            var filters = BuildFilters(plan, info, format, caps);
+
+            if (filters.Count > 0)
+            {
+                arguments.AddRange(["-vf", string.Join(',', filters)]);
+            }
+
+            if (format is "png" or "jpg" or "webp")
+            {
+                // Один кадр: «сделай скриншот» — это тоже операция над видео
+                arguments.AddRange(["-an", "-frames:v", "1"]);
+            }
+            else
+            {
+                AppendVideoTail(arguments);
+            }
+        }
+
+        arguments.Add(outputPath);
+
+        return arguments;
+    }
+
+    /// <summary>
+    /// Аргументы круга пережатия: параметры кодирования уже посчитаны, план нужен
+    /// только ради обрезки — круг всегда начинается с исходника, а не с прошлого результата.
+    /// </summary>
+    internal static List<string> BuildEncodeArguments(
+        EncodeSettings settings,
+        MediaPlan plan,
+        MediaInfo info,
+        string format,
+        string inputPath,
+        string outputPath)
+    {
+        var arguments = OpenInput(plan, info, inputPath, double.MaxValue);
+
+        if (settings.CopyStreams)
+        {
+            // Быстрый путь: резать нечего, достаточно переложить потоки в контейнер
+            arguments.AddRange(["-map", "0:v:0", "-map", "0:a:0?", "-c", "copy", "-movflags", "+faststart"]);
+        }
+        else if (AllowedAudioFormats.Contains(format))
+        {
+            AppendAudioOnly(arguments, format, info, settings.AudioBitrateBps, settings.Channels);
+        }
+        else if (format == "gif")
+        {
+            var filters = new List<string>();
+
+            if (settings.Fps > 0)
+            {
+                filters.Add($"fps={settings.Fps}");
+            }
+
+            if (settings.Width > 0)
+            {
+                filters.Add($"scale={settings.Width}:-2:flags=lanczos");
+            }
+
+            AppendGif(arguments, filters, settings.Colors);
+        }
+        else
+        {
+            var filters = new List<string>();
+
+            if (settings.Fps > 0)
+            {
+                filters.Add($"fps={settings.Fps}");
+            }
+
+            if (settings.Width > 0 && settings.Height > 0)
+            {
+                filters.Add($"scale={settings.Width}:{settings.Height}:flags=lanczos");
+            }
+
+            arguments.AddRange(["-map", "0:v:0", "-map", "0:a:0?"]);
+
+            // Однопроходный ABR, а не CRF: попадание в байты через CRF — это ровно тот
+            // перебор кругов, который мы и убираем. Второй проход на слабом сервере
+            // не окупается против одного корректирующего круга
+            arguments.AddRange(
+            [
+                "-c:v", "libx264",
+                "-preset", "veryfast",
+                "-b:v", settings.VideoBitrateBps.ToString(CultureInfo.InvariantCulture),
+                "-maxrate", ((long)(settings.VideoBitrateBps * 1.45)).ToString(CultureInfo.InvariantCulture),
+                "-bufsize", (settings.VideoBitrateBps * 2).ToString(CultureInfo.InvariantCulture)
+            ]);
+
+            if (filters.Count > 0)
+            {
+                arguments.AddRange(["-vf", string.Join(',', filters)]);
+            }
+
+            arguments.AddRange(
+            [
+                "-c:a", "aac",
+                "-b:a", settings.AudioBitrateBps.ToString(CultureInfo.InvariantCulture),
+                "-ac", Math.Max(settings.Channels, 1).ToString(CultureInfo.InvariantCulture)
+            ]);
+
+            AppendVideoTail(arguments);
+        }
+
+        arguments.Add(outputPath);
+
+        return arguments;
+    }
+
+    /// <summary>
+    /// Общее начало: перемотка, вход и длительность. -t однозначен рядом с -ss,
+    /// в отличие от -to, у которого смещается точка отсчёта.
+    /// </summary>
+    private static List<string> OpenInput(MediaPlan plan, MediaInfo info, string inputPath, double maxSeconds)
     {
         var arguments = new List<string> { "-y", "-hide_banner", "-loglevel", "error" };
-
         var start = Math.Clamp(plan.Start ?? 0, 0, Math.Max(info.DurationSeconds, 0));
 
         if (start > 0)
@@ -259,55 +652,104 @@ public static class FfmpegRunner
 
         arguments.AddRange(["-i", inputPath]);
 
-        // Длительность считаем сами и режем по потолку: -t однозначен, в отличие от -to
-        // рядом с -ss, который смещает точку отсчёта
         var available = info.DurationSeconds > 0 ? info.DurationSeconds - start : 0;
         var requested = plan.End.HasValue ? plan.End.Value - start : available;
-        var duration = Math.Min(requested > 0 ? requested : available, MaxOutputSeconds);
+        var duration = Math.Min(requested > 0 ? requested : available, maxSeconds);
 
-        if (duration > 0)
+        if (duration > 0 && !double.IsInfinity(duration) && duration < double.MaxValue)
         {
             arguments.AddRange(["-t", Format(duration)]);
         }
-
-        var filters = BuildFilters(plan, info, format);
-
-        if (format == "gif")
-        {
-            // split нужен, чтобы один и тот же поток кадров ушёл и на построение палитры,
-            // и на раскраску по ней
-            var chain = filters.Count > 0 ? string.Join(',', filters) + "," : string.Empty;
-            arguments.AddRange(["-filter_complex", $"[0:v]{chain}split[a][b];[a]palettegen[p];[b][p]paletteuse"]);
-            arguments.AddRange(["-loop", "0"]);
-        }
-        else if (filters.Count > 0)
-        {
-            arguments.AddRange(["-vf", string.Join(',', filters)]);
-        }
-
-        // У картинки и гифки звука быть не может, у видео — оставляем как есть
-        if (format is "gif" or "png" or "jpg" or "webp")
-        {
-            arguments.Add("-an");
-        }
-
-        if (format is "png" or "jpg" or "webp")
-        {
-            // Один кадр: «сделай скриншот» — это тоже операция над видео
-            arguments.AddRange(["-frames:v", "1"]);
-        }
-
-        arguments.Add(outputPath);
 
         return arguments;
     }
 
     /// <summary>
-    /// Цепочка видеофильтров. Порядок важен: сначала вырезаем область, потом уменьшаем.
+    /// Хвост видеоконтейнера. yuv420p не опционален: у десятибитного исходника
+    /// с YouTube результат иначе открывается плеером и показывает чёрный прямоугольник
+    /// в Discord. faststart двигает индекс в начало — иначе превью не проигрывается,
+    /// пока файл не скачается целиком.
     /// </summary>
-    private static List<string> BuildFilters(MediaPlan plan, MediaInfo info, string format)
+    private static void AppendVideoTail(List<string> arguments) =>
+        arguments.AddRange(["-pix_fmt", "yuv420p", "-movflags", "+faststart"]);
+
+    /// <summary>
+    /// Гифка собирается через палитру: без palettegen/paletteuse цвета получаются грязными.
+    /// split нужен, чтобы один и тот же поток кадров ушёл и на построение палитры,
+    /// и на раскраску по ней.
+    /// </summary>
+    private static void AppendGif(List<string> arguments, IReadOnlyList<string> filters, int colors)
+    {
+        var chain = filters.Count > 0 ? string.Join(',', filters) + "," : string.Empty;
+        var palette = colors > 0 ? $"palettegen=max_colors={colors}:stats_mode=diff" : "palettegen=stats_mode=diff";
+
+        arguments.AddRange(
+        [
+            "-filter_complex",
+            $"[0:v]{chain}split[a][b];[a]{palette}[p];"
+                + "[b][p]paletteuse=dither=bayer:bayer_scale=3:diff_mode=rectangle",
+            "-loop", "0",
+            "-an"
+        ]);
+    }
+
+    /// <summary>
+    /// Только звуковая дорожка. Если формат совпал с родным контейнером кодека
+    /// и битрейт не задан — копируем как есть: без потерь и мгновенно.
+    /// </summary>
+    private static void AppendAudioOnly(
+        List<string> arguments,
+        string format,
+        MediaInfo info,
+        long bitrateBps,
+        int channels)
+    {
+        arguments.AddRange(["-vn", "-map", "0:a:0"]);
+
+        if (bitrateBps <= 0 && NativeContainer(info.Audio?.Codec) == format)
+        {
+            arguments.AddRange(["-c:a", "copy"]);
+            return;
+        }
+
+        var codec = format switch
+        {
+            "mp3" => "libmp3lame",
+            "m4a" => "aac",
+            _ => "libopus"
+        };
+
+        arguments.AddRange(["-c:a", codec]);
+
+        if (bitrateBps > 0)
+        {
+            arguments.AddRange(["-b:a", bitrateBps.ToString(CultureInfo.InvariantCulture)]);
+        }
+
+        if (channels > 0)
+        {
+            arguments.AddRange(["-ac", channels.ToString(CultureInfo.InvariantCulture)]);
+        }
+    }
+
+    /// <summary>
+    /// Цепочка видеофильтров. Частота кадров идёт первой: тогда масштабированию
+    /// достаётся пятнадцать кадров в секунду вместо шестидесяти. Кроп — до scale:
+    /// его координаты заданы в пикселях исходника.
+    /// </summary>
+    private static List<string> BuildFilters(MediaPlan plan, MediaInfo info, string format, MediaLimits limits)
     {
         var filters = new List<string>();
+
+        // Гифке частоту задаём всегда: исходные 60 fps раздувают её до неприличия
+        var fps = Math.Min(plan.Fps ?? (format == "gif" ? limits.MaxFps : 0), limits.MaxFps);
+
+        if (fps > 0)
+        {
+            filters.Add($"fps={fps}");
+        }
+
+        var sourceWidth = info.Width;
 
         if (plan.Crop != null)
         {
@@ -316,24 +758,16 @@ public static class FfmpegRunner
             if (crop != null)
             {
                 filters.Add($"crop={crop.Width}:{crop.Height}:{crop.X}:{crop.Y}");
+                sourceWidth = crop.Width;
             }
         }
 
-        var sourceWidth = plan.Crop != null ? ClampCrop(plan.Crop, info)?.Width ?? info.Width : info.Width;
-        var width = Math.Min(plan.Width ?? sourceWidth, MaxWidth);
+        var width = Math.Min(plan.Width ?? sourceWidth, limits.MaxWidth);
 
         if (width > 0 && width < sourceWidth)
         {
             // -2 вместо -1: высота округляется до чётной, иначе кодеки видео ругаются
             filters.Add($"scale={width}:-2:flags=lanczos");
-        }
-
-        // Гифке частоту задаём всегда: исходные 60 fps раздувают её до неприличия
-        var fps = Math.Min(plan.Fps ?? (format == "gif" ? MaxFps : 0), MaxFps);
-
-        if (fps > 0)
-        {
-            filters.Add($"fps={fps}");
         }
 
         return filters;
@@ -354,99 +788,6 @@ public static class FfmpegRunner
     }
 
     private static string Format(double value) => value.ToString("0.###", CultureInfo.InvariantCulture);
-
-    /// <summary>
-    /// Запускает процесс. null — успех, иначе текст ошибки из stderr.
-    /// Аргументы уходят списком, а не строкой: оболочки в цепочке нет, склеивать нечего.
-    /// </summary>
-    private static async Task<string?> ExecuteAsync(string fileName, IReadOnlyList<string> arguments)
-    {
-        using var process = StartProcess(fileName, arguments);
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(ProcessTimeoutSeconds));
-
-        var stderr = await process.StandardError.ReadToEndAsync(timeout.Token);
-
-        try
-        {
-            await process.WaitForExitAsync(timeout.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            Kill(process);
-            return "процесс не уложился в отведённое время";
-        }
-
-        return process.ExitCode == 0 ? null : stderr.Trim();
-    }
-
-    /// <summary>
-    /// Запускает процесс и возвращает stdout. null — процесс завершился с ошибкой.
-    /// </summary>
-    private static async Task<string?> ReadOutputAsync(string fileName, IReadOnlyList<string> arguments)
-    {
-        using var process = StartProcess(fileName, arguments);
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(ProcessTimeoutSeconds));
-
-        var stdout = await process.StandardOutput.ReadToEndAsync(timeout.Token);
-
-        try
-        {
-            await process.WaitForExitAsync(timeout.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            Kill(process);
-            return null;
-        }
-
-        return process.ExitCode == 0 ? stdout : null;
-    }
-
-    private static Process StartProcess(string fileName, IReadOnlyList<string> arguments)
-    {
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = fileName,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-
-        foreach (var argument in arguments)
-        {
-            startInfo.ArgumentList.Add(argument);
-        }
-
-        return Process.Start(startInfo) ?? throw new InvalidOperationException($"не удалось запустить {fileName}");
-    }
-
-    private static void Kill(Process process)
-    {
-        try
-        {
-            process.Kill(entireProcessTree: true);
-        }
-        catch (Exception ex)
-        {
-            BotLogger.Warning("Не удалось убить зависший процесс: {Message}", ex.Message);
-        }
-    }
-
-    private static void Cleanup(string directory)
-    {
-        try
-        {
-            if (Directory.Exists(directory))
-            {
-                Directory.Delete(directory, recursive: true);
-            }
-        }
-        catch (Exception ex)
-        {
-            BotLogger.Warning("Не удалось убрать временный каталог {Directory}: {Message}", directory, ex.Message);
-        }
-    }
 
     #endregion
 }

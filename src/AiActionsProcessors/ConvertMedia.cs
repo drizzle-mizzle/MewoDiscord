@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text.Json;
 
 using Discord;
 using Discord.WebSocket;
@@ -11,26 +10,26 @@ namespace MewoDiscord.AiActionsProcessors;
 
 /// <summary>
 /// Процессор действия «сделай что-нибудь с этим файлом»: обрезать, кадрировать,
-/// уменьшить, сменить формат. Модель здесь работает переводчиком — превращает фразу
-/// в типизированный план (<see cref="FfmpegRunner.MediaPlan"/>), а саму работу делает
-/// ffmpeg по аргументам, собранным кодом. Командную строку модель не пишет никогда.
-/// Генерации тут нет вовсе: операция механическая и детерминированная.
+/// уменьшить, сменить формат, вытащить звук. Модель здесь работает переводчиком —
+/// превращает фразу в типизированный план (<see cref="FfmpegRunner.MediaPlan"/>),
+/// а саму работу делает ffmpeg по аргументам, собранным кодом. Командную строку
+/// модель не пишет никогда. Генерации тут нет вовсе: операция механическая
+/// и детерминированная.
 /// </summary>
 public static class ConvertMedia
 {
     private const int DownloadTimeoutSeconds = 120;
 
     /// <summary>
-    /// Промпт-переводчик: свободная фраза → план операции. Формат ответа описан здесь же,
-    /// поэтому менять его надо вместе с <see cref="ParsePlan"/>.
+    /// Список полей плана для файла, который видно: кроп здесь осмыслен, потому что
+    /// размеры исходника известны и сообщаются модели.
     /// </summary>
-    private const string PlanPrompt =
+    private const string PlanFields =
         """
-        Ты переводишь просьбу пользователя в план операции над медиафайлом.
-        Ответь строго одним объектом JSON, без пояснений и без markdown.
-
         Поля (все необязательные, лишние не добавляй):
-        "format" — желаемый формат результата: gif, mp4, webm, png, jpg, webp;
+        "format" — желаемый формат результата: gif, mp4, webm, png, jpg, webp
+        (для звуковой дорожки: mp3, m4a, opus, ogg);
+        "audio" — true, если просят оставить только звуковую дорожку;
         "start" — с какой секунды начать (число);
         "end" — на какой секунде закончить (число);
         "crop" — объект {"x":число,"y":число,"w":число,"h":число} в пикселях исходника;
@@ -62,15 +61,24 @@ public static class ConvertMedia
             return;
         }
 
-        var input = await DownloadAsync(source.Url);
+        // Слот занят другой операцией — ждать за чужим качанием видео бессмысленно
+        using var workspace = await MediaWorkspace.TryAcquireAsync(MediaWorkspace.ConvertGrace);
 
-        if (input == null)
+        if (workspace == null)
+        {
+            await ReplyAsync(message, BotEmbeds.Warning(BotMessages.MediaBusy()));
+            return;
+        }
+
+        var inputPath = workspace.PathFor("source" + Path.GetExtension(source.FileName));
+
+        if (!await DownloadAsync(source.Url, inputPath))
         {
             await ReplyAsync(message, BotEmbeds.Error(BotMessages.MediaFailed()));
             return;
         }
 
-        var info = await FfmpegRunner.ProbeAsync(input, source.FileName);
+        var info = await FfmpegRunner.ProbeAsync(inputPath);
 
         if (info == null)
         {
@@ -80,11 +88,12 @@ public static class ConvertMedia
 
         // Размеры и длительность уходят в промпт: без них модель не сможет посчитать кроп
         var answer = await ChatGptClient.AskInstantAsync(
-            $"{PlanPrompt}\n\nИсходный файл: {source.FileName}, {info.Width}x{info.Height}, "
+            $"{MediaPlanParser.PromptHeader}\n\n{PlanFields}\n\n"
+            + $"Исходный файл: {source.FileName}, {info.Width}x{info.Height}, "
             + $"длительность {info.DurationSeconds.ToString("0.#", CultureInfo.InvariantCulture)} с.\n\n"
             + $"Просьба пользователя:\n\"\"\"\n{context.Text}\n\"\"\"");
 
-        var plan = ParsePlan(answer);
+        var plan = MediaPlanParser.Parse(answer);
 
         if (plan == null || plan.IsEmpty)
         {
@@ -96,23 +105,26 @@ public static class ConvertMedia
 
         using var typing = message.Channel.EnterTypingState();
 
-        var result = await FfmpegRunner.RunAsync(input, source.FileName, plan, info);
+        var result = await FfmpegRunner.RunAsync(workspace, inputPath, source.FileName, plan, info);
 
-        if (result.Content == null)
+        if (result.FilePath == null)
         {
             await ReplyAsync(message, BotEmbeds.Error(result.Error ?? BotMessages.MediaFailed()));
             return;
         }
 
         var uploadLimit = ((message.Channel as SocketGuildChannel)?.Guild)?.MaxUploadLimit ?? FfmpegRunner.MaxInputBytes;
+        var size = new FileInfo(result.FilePath).Length;
 
-        if ((ulong)result.Content.Length > uploadLimit)
+        if ((ulong)size > uploadLimit)
         {
-            await ReplyAsync(message, BotEmbeds.Warning(BotMessages.MediaResultTooBig(FormatSize(result.Content.Length))));
+            await ReplyAsync(message, BotEmbeds.Warning(BotMessages.MediaResultTooBig(FormatSize(size))));
             return;
         }
 
-        await SendResultAsync(message, result);
+        // Отправка обязана закончиться внутри using: вложение читается с диска потоком,
+        // а Dispose рабочего каталога сносит файл
+        await MediaReply.SendFileAsync(message, result.FilePath, result.FileName!);
     }
 
     #region Internals
@@ -121,98 +133,6 @@ public static class ConvertMedia
     /// Что именно обрабатываем: вложение или картинка из embed'а (гифка по ссылке).
     /// </summary>
     private record MediaSource(string Url, string FileName, long Size);
-
-    /// <summary>
-    /// Разбирает ответ модели в план. null — это не JSON: считаем, что просьбу не поняли.
-    /// Числа берутся мягко (модель может прислать строку) — но только числа,
-    /// никаких строк в аргументы ffmpeg отсюда не попадает, кроме формата из белого списка.
-    /// </summary>
-    internal static FfmpegRunner.MediaPlan? ParsePlan(string answer)
-    {
-        var json = ExtractJson(answer);
-
-        if (json == null)
-        {
-            return null;
-        }
-
-        try
-        {
-            using var document = JsonDocument.Parse(json);
-            var root = document.RootElement;
-
-            if (root.ValueKind != JsonValueKind.Object)
-            {
-                return null;
-            }
-
-            FfmpegRunner.CropBox? crop = null;
-
-            if (root.TryGetProperty("crop", out var cropValue) && cropValue.ValueKind == JsonValueKind.Object)
-            {
-                var x = ReadInt(cropValue, "x");
-                var y = ReadInt(cropValue, "y");
-                var width = ReadInt(cropValue, "w");
-                var height = ReadInt(cropValue, "h");
-
-                if (width is > 0 && height is > 0)
-                {
-                    crop = new FfmpegRunner.CropBox(x ?? 0, y ?? 0, width.Value, height.Value);
-                }
-            }
-
-            return new FfmpegRunner.MediaPlan(
-                ReadString(root, "format"),
-                ReadDouble(root, "start"),
-                ReadDouble(root, "end"),
-                crop,
-                ReadInt(root, "width"),
-                ReadInt(root, "fps"));
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// Вытаскивает объект JSON из ответа: модель любит обрамить его ```json.
-    /// </summary>
-    internal static string? ExtractJson(string answer)
-    {
-        var start = answer.IndexOf('{');
-        var end = answer.LastIndexOf('}');
-
-        return start < 0 || end <= start ? null : answer[start..(end + 1)];
-    }
-
-    private static string? ReadString(JsonElement element, string name) =>
-        element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
-
-    private static double? ReadDouble(JsonElement element, string name)
-    {
-        if (!element.TryGetProperty(name, out var value))
-        {
-            return null;
-        }
-
-        if (value.ValueKind == JsonValueKind.Number)
-        {
-            return value.GetDouble();
-        }
-
-        return value.ValueKind == JsonValueKind.String
-            && double.TryParse(value.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
-                ? parsed
-                : null;
-    }
-
-    private static int? ReadInt(JsonElement element, string name)
-    {
-        var value = ReadDouble(element, name);
-
-        return value == null ? null : (int)Math.Round(value.Value);
-    }
 
     /// <summary>
     /// Ищет в сообщении файл, пригодный для ffmpeg. Вложение приоритетнее embed'а:
@@ -254,56 +174,52 @@ public static class ConvertMedia
         return string.IsNullOrWhiteSpace(name) || !name.Contains('.') ? "media.mp4" : name;
     }
 
-    private static async Task<byte[]?> DownloadAsync(string url)
+    /// <summary>
+    /// Качает файл на диск, а не в память: дальше с ним работает ffmpeg, которому
+    /// всё равно нужен путь. Потолок проверяется по ходу — Content-Length может соврать.
+    /// </summary>
+    private static async Task<bool> DownloadAsync(string url, string path)
     {
         try
         {
-            var content = await Http.GetByteArrayAsync(url);
+            using var response = await Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+            response.EnsureSuccessStatusCode();
 
-            return content.Length > FfmpegRunner.MaxInputBytes ? null : content;
+            if (response.Content.Headers.ContentLength > FfmpegRunner.MaxInputBytes)
+            {
+                return false;
+            }
+
+            await using var source = await response.Content.ReadAsStreamAsync();
+            await using var target = File.Create(path);
+
+            var buffer = new byte[81920];
+            var total = 0L;
+            int read;
+
+            while ((read = await source.ReadAsync(buffer)) > 0)
+            {
+                total += read;
+
+                if (total > FfmpegRunner.MaxInputBytes)
+                {
+                    return false;
+                }
+
+                await target.WriteAsync(buffer.AsMemory(0, read));
+            }
+
+            return total > 0;
         }
         catch (Exception ex)
         {
             BotLogger.Warning("Не удалось скачать файл {Url}: {Message}", url, ex.Message);
-            return null;
+            return false;
         }
     }
 
-    private static async Task SendResultAsync(SocketUserMessage message, FfmpegRunner.MediaResult result)
-    {
-        var attachment = new FileAttachment(new MemoryStream(result.Content!), result.FileName!);
-
-        try
-        {
-            await message.Channel.SendFilesAsync(
-                [attachment],
-                allowedMentions: AllowedMentions.None,
-                messageReference: new MessageReference(message.Id, failIfNotExists: false));
-        }
-        catch (Exception ex)
-        {
-            BotLogger.Error("Не удалось отправить результат конвертации: {Message}", ex.Message);
-        }
-        finally
-        {
-            attachment.Dispose();
-        }
-    }
-
-    private static async Task ReplyAsync(SocketUserMessage message, Embed embed)
-    {
-        try
-        {
-            await message.Channel.SendMessageAsync(
-                embed: embed,
-                allowedMentions: AllowedMentions.None,
-                messageReference: new MessageReference(message.Id, failIfNotExists: false));
-        }
-        catch (Exception ex)
-        {
-            BotLogger.Error("Не удалось отправить сообщение действия: {Message}", ex.Message);
-        }
-    }
+    private static async Task ReplyAsync(SocketUserMessage message, Embed embed) =>
+        await MediaReply.SendEmbedAsync(message, embed);
 
     private static string FormatSize(long bytes) => $"{bytes / 1024d / 1024d:F1} МБ";
 
