@@ -91,6 +91,11 @@ public static class CustomAiActionHandler
 
         // Работать можно и над своим файлом, и над тем, на который отвечают
         CustomAiActionGate.HasMediaAttached => HasMedia(message) || (quoted != null && HasMedia(quoted)),
+
+        // Голая ссылка — это не просьба: рядом должен быть текст («скачай», «обрежь с 1:04»).
+        // Упоминание бота за текст не считается — это обращение
+        CustomAiActionGate.HasYoutubeLink =>
+            YoutubeLinks.HasRequestBesidesLink(ChatGptSessionHandler.StripBotMention(message.Content, botId)),
         _ => false
     };
 

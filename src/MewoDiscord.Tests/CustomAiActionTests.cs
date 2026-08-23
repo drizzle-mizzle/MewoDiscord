@@ -66,6 +66,13 @@ public class CustomAiActionTests
 
         Assert.True(CustomAiActionStore.TryParseGate("HAS_USER_MENTION", out var gate));
         Assert.Equal(CustomAiActionGate.HasUserMention, gate);
+
+        Assert.True(CustomAiActionStore.TryParseGate("HAS_MEDIA_ATTACHED", out gate));
+        Assert.Equal(CustomAiActionGate.HasMediaAttached, gate);
+
+        Assert.True(CustomAiActionStore.TryParseGate("HAS_YOUTUBE_LINK", out gate));
+        Assert.Equal(CustomAiActionGate.HasYoutubeLink, gate);
+
         Assert.False(CustomAiActionStore.TryParseGate("HAS_MAGIC", out _));
         Assert.False(CustomAiActionStore.TryParseGate(string.Empty, out _));
     }
