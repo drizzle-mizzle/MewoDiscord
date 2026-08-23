@@ -23,14 +23,20 @@ public static class MediaReply
     /// Отправляет файл с диска. Вызывать обязательно до того, как рабочий каталог
     /// будет убран: вложение читается потоком, а не копируется в память.
     /// </summary>
-    public static async Task SendFileAsync(SocketUserMessage message, string path, string fileName, string? text = null)
+    public static async Task<IUserMessage?> SendFileAsync(
+        SocketUserMessage message,
+        string path,
+        string fileName,
+        string? text = null)
     {
         await using var stream = File.OpenRead(path);
         using var attachment = new FileAttachment(stream, fileName);
 
         try
         {
-            await message.Channel.SendFilesAsync(
+            // Отправленное сообщение возвращается наружу: за ним закрепляется
+            // медиа-сессия, чтобы на результат можно было ответить и попросить поправить
+            return await message.Channel.SendFilesAsync(
                 [attachment],
                 text: text,
                 allowedMentions: AllowedMentions.None,
@@ -40,6 +46,7 @@ public static class MediaReply
         catch (Exception ex)
         {
             BotLogger.Error("Не удалось отправить результат обработки медиа: {Message}", ex.Message);
+            return null;
         }
     }
 

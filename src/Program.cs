@@ -19,6 +19,7 @@ internal class Program
     private static InteractionService? _interactions;
     private static bool _channelNamesRestored;
     private static bool _commandsRegistered;
+    private static bool _emotesReady;
 
     /// <summary>
     /// Модули команд отключённой ИИ-части: код оставлен, но в Discord не регистрируется.
@@ -66,6 +67,7 @@ internal class Program
         {
             ChatGptSessionStore.Load();
             CustomAiActionStore.Load();
+            MediaSessionStore.Load();
 
             // YouTube ломает yt-dlp примерно раз в месяц, и на вопрос «почему перестало
             // работать» в журнале должен быть ответ. Не отвечает — не беда: остальной
@@ -176,6 +178,13 @@ internal class Program
         }
 
         await BotLogger.InitializeSessionAsync();
+
+        // Эмодзи приложения живут у самого приложения, а не у сервера: заводятся один раз
+        if (!_emotesReady)
+        {
+            _emotesReady = true;
+            await BotEmotes.EnsureAsync(_client!);
+        }
 
         // Только при первом Ready: событие повторяется на каждом переподключении gateway.
         // Сверка лишь будит вотчеры — те сами решают по актуальному составу каналов

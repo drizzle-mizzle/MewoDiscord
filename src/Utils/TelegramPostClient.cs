@@ -13,30 +13,6 @@ public static partial class TelegramPostClient
 {
     private const string EmbedUrlFormat = "https://t.me/{0}/{1}?embed=1";
     private const string PostUrlFormat = "https://t.me/{0}/{1}";
-    private const int RequestTimeoutSeconds = 20;
-
-    /// <summary>
-    /// Телеграм отдаёт виджет только «браузерным» клиентам.
-    /// </summary>
-    private const string BrowserUserAgent =
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
-
-    private static readonly HttpClient Http = CreateClient();
-
-    /// <summary>
-    /// Медиафайл поста.
-    /// </summary>
-    public record TelegramMedia(string Url, bool IsVideo, string? ThumbnailUrl);
-
-    /// <summary>
-    /// Разобранный пост Telegram.
-    /// </summary>
-    public record TelegramPost(string? ChannelName, string? Caption, IReadOnlyList<TelegramMedia> Media);
-
-    /// <summary>
-    /// Скачанный медиафайл. Content == null означает, что файл не влез в лимит Discord.
-    /// </summary>
-    public record MediaDownload(MemoryStream? Content, long SizeBytes);
 
     /// <summary>
     /// Ссылка на сам пост (без embed) — для кнопки «открыть в Telegram».
@@ -47,13 +23,13 @@ public static partial class TelegramPostClient
     /// <summary>
     /// Загружает и разбирает пост. Возвращает null, если пост недоступен.
     /// </summary>
-    public static async Task<TelegramPost?> TryGetPostAsync(string channel, string postId)
+    public static async Task<SocialPost?> TryGetPostAsync(string channel, string postId)
     {
         var url = string.Format(EmbedUrlFormat, channel, postId);
 
         try
         {
-            var html = await Http.GetStringAsync(url);
+            var html = await SocialMediaHttp.Http.GetStringAsync(url);
             return ParsePost(html);
         }
         catch (Exception ex)
@@ -64,86 +40,33 @@ public static partial class TelegramPostClient
     }
 
     /// <summary>
-    /// Скачивает медиа, если оно укладывается в maxBytes.
-    /// Возвращает null при ошибке сети; при превышении лимита — размер без содержимого.
-    /// </summary>
-    public static async Task<MediaDownload?> TryDownloadAsync(string url, ulong maxBytes)
-    {
-        try
-        {
-            using var response = await Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
-            response.EnsureSuccessStatusCode();
-
-            var declaredSize = response.Content.Headers.ContentLength;
-
-            if (declaredSize > (long)maxBytes)
-            {
-                return new MediaDownload(null, declaredSize.Value);
-            }
-
-            await using var source = await response.Content.ReadAsStreamAsync();
-            var buffer = new MemoryStream();
-            var chunk = new byte[81920];
-            long total = 0;
-
-            while (true)
-            {
-                var read = await source.ReadAsync(chunk);
-
-                if (read == 0)
-                {
-                    break;
-                }
-
-                total += read;
-
-                // Длина могла не прийти в заголовках — обрываем по факту
-                if (total > (long)maxBytes)
-                {
-                    await buffer.DisposeAsync();
-                    return new MediaDownload(null, total);
-                }
-
-                await buffer.WriteAsync(chunk.AsMemory(0, read));
-            }
-
-            buffer.Position = 0;
-            return new MediaDownload(buffer, total);
-        }
-        catch (Exception ex)
-        {
-            BotLogger.Warning("Не удалось скачать медиа Telegram {Url}: {Message}", url, ex.Message);
-            return null;
-        }
-    }
-
-    /// <summary>
     /// Разбирает HTML виджета. Внутренний метод — на нём держатся тесты парсинга.
     /// </summary>
-    internal static TelegramPost? ParsePost(string html)
+    internal static SocialPost? ParsePost(string html)
     {
         if (string.IsNullOrWhiteSpace(html))
         {
             return null;
         }
 
-        var media = new List<TelegramMedia>();
+        var media = new List<SocialMedia>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
         var thumbnail = FirstGroup(VideoThumbRegex(), html);
 
         foreach (Match match in VideoRegex().Matches(html))
         {
-            media.Add(new TelegramMedia(WebUtility.HtmlDecode(match.Groups[1].Value), IsVideo: true, thumbnail));
+            AddMedia(media, seen, new SocialMedia(WebUtility.HtmlDecode(match.Groups[1].Value), IsVideo: true, thumbnail));
         }
 
         foreach (Match match in PhotoRegex().Matches(html))
         {
-            media.Add(new TelegramMedia(WebUtility.HtmlDecode(match.Groups[1].Value), IsVideo: false, ThumbnailUrl: null));
+            AddMedia(media, seen, new SocialMedia(WebUtility.HtmlDecode(match.Groups[1].Value), IsVideo: false, ThumbnailUrl: null));
         }
 
         // Видео без прямой ссылки (длинное или защищённое) — остаётся только превью
         if (media.Count == 0 && thumbnail != null)
         {
-            media.Add(new TelegramMedia(thumbnail, IsVideo: false, thumbnail));
+            media.Add(new SocialMedia(thumbnail, IsVideo: false, thumbnail));
         }
 
         var channelName = FirstGroup(OwnerNameRegex(), html);
@@ -154,7 +77,19 @@ public static partial class TelegramPostClient
             return null;
         }
 
-        return new TelegramPost(channelName, caption, media);
+        return new SocialPost(channelName, caption, media);
+    }
+
+    /// <summary>
+    /// Кладёт файл в список, пропуская повтор по адресу: один и тот же файл дважды
+    /// в посте — это дубль вёрстки, а не второе вложение.
+    /// </summary>
+    private static void AddMedia(List<SocialMedia> media, HashSet<string> seen, SocialMedia item)
+    {
+        if (seen.Add(item.Url))
+        {
+            media.Add(item);
+        }
     }
 
     /// <summary>
@@ -182,20 +117,14 @@ public static partial class TelegramPostClient
         return match.Success ? WebUtility.HtmlDecode(match.Groups[1].Value).Trim() : null;
     }
 
-    private static HttpClient CreateClient()
-    {
-        var client = new HttpClient
-        {
-            Timeout = TimeSpan.FromSeconds(RequestTimeoutSeconds)
-        };
-
-        client.DefaultRequestHeaders.UserAgent.ParseAdd(BrowserUserAgent);
-        return client;
-    }
-
     #region Регулярки разбора виджета
 
-    [GeneratedRegex(@"<video[^>]+src=""([^""]+)""", RegexOptions.IgnoreCase)]
+    /// <summary>
+    /// Видео, не заполняющее плеер (вертикальное), Telegram кладёт на размытую подложку —
+    /// копию того же файла с классом js-message_video_blured. Это оформление, а не второй
+    /// файл: без отсечки такое видео уезжало в Discord дважды.
+    /// </summary>
+    [GeneratedRegex(@"<video(?![^>]*js-message_video_blured)[^>]+src=""([^""]+)""", RegexOptions.IgnoreCase)]
     private static partial Regex VideoRegex();
 
     [GeneratedRegex(@"tgme_widget_message_photo_wrap[^""]*""[^>]*background-image:\s*url\('([^']+)'\)", RegexOptions.IgnoreCase)]

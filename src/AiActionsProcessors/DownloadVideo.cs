@@ -266,11 +266,24 @@ public static partial class DownloadVideo
 
         // Отправка обязана закончиться внутри using рабочего каталога: вложение
         // читается с диска потоком, и снос каталога оборвал бы заливку
-        await MediaReply.SendFileAsync(
+        var sent = await MediaReply.SendFileAsync(
             message,
             result,
             Path.GetFileNameWithoutExtension(displayName) + Path.GetExtension(result),
             string.Join('\n', notes));
+
+        if (sent != null)
+        {
+            // Исходником для дальнейших правок становится сам результат, а не ролик
+            // на YouTube: возвращаться туда дорого, а после смены качества ещё
+            // и бессмысленно — правят то, что уже видят. План поэтому пустой:
+            // отправленный файл сам себе оригинал
+            MediaSessionStore.Remember(
+                sent.Id,
+                message.Channel.Id,
+                sent.Id,
+                MediaPlanParser.Serialize(new FfmpegRunner.MediaPlan()));
+        }
     }
 
     /// <summary>

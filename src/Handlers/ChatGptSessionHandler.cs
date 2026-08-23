@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using Discord;
 using Discord.WebSocket;
+using MewoDiscord.AiActionsProcessors;
 using MewoDiscord.Helpers;
 using MewoDiscord.Utils;
 
@@ -66,6 +67,17 @@ public static partial class ChatGptSessionHandler
                 StartHit(message, anchored, quoted: null);
                 return true;
             }
+
+            // Реплай на результат операции над файлом — продолжение работы над ним же.
+            // Упоминание бота тут не требуется, как и в сессиях ChatGPT: ответ
+            // в закреплённое сообщение сам по себе однозначен
+            var media = MediaSessionStore.FindByAnchor(referencedId.Value);
+
+            if (media != null)
+            {
+                StartMediaTurn(message, media);
+                return true;
+            }
         }
 
         if (!message.MentionedUsers.Any(u => u.Id == botId))
@@ -115,6 +127,25 @@ public static partial class ChatGptSessionHandler
     /// Запускает обработку хита в фоне: генерация занимает минуты и не должна
     /// держать канальный замок MessageHandler.
     /// </summary>
+    /// <summary>
+    /// Запускает круг правок медиа в фоне: ffmpeg работает секундами и минутами,
+    /// а канальный замок MessageHandler держать столько нельзя.
+    /// </summary>
+    private static void StartMediaTurn(SocketUserMessage message, MediaSession session)
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await ConvertMedia.ContinueAsync(message, session);
+            }
+            catch (Exception ex)
+            {
+                BotLogger.Error(ex, "Ошибка продолжения медиа-сессии {Anchor}", session.AnchorMessageId);
+            }
+        });
+    }
+
     private static void StartHit(SocketUserMessage message, ChatGptSessionStore.SessionEntry entry, IMessage? quoted)
     {
         _ = Task.Run(async () =>
@@ -447,7 +478,11 @@ public static partial class ChatGptSessionHandler
             match.Groups[1].Value == botId.ToString() ? string.Empty : match.Value).Trim();
     }
 
-    private static async Task<IMessage?> FetchMessageAsync(ISocketMessageChannel channel, ulong messageId)
+    /// <summary>
+    /// Достаёт сообщение по идентификатору. В кэше его может не быть — например,
+    /// когда медиа-сессия возвращается к исходнику, отправленному давно.
+    /// </summary>
+    internal static async Task<IMessage?> FetchMessageAsync(ISocketMessageChannel channel, ulong messageId)
     {
         try
         {

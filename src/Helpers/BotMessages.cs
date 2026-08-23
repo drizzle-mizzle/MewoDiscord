@@ -77,6 +77,12 @@ public static class BotMessages
     public static string TelegramTooBig(string size, string url) =>
         Format(nameof(TelegramTooBig), ("{size}", size), ("{url}", url));
 
+    public static string XFooter() =>
+        Format(nameof(XFooter));
+
+    public static string XTooBig(string size, string url) =>
+        Format(nameof(XTooBig), ("{size}", size), ("{url}", url));
+
     public static string ChatGptLoginInstructions(string url) =>
         Format(nameof(ChatGptLoginInstructions), ("{url}", url));
 
@@ -166,6 +172,9 @@ public static class BotMessages
 
     public static string MediaPlanUnclearVideo() =>
         Format(nameof(MediaPlanUnclearVideo));
+
+    public static string MediaSourceGone() =>
+        Format(nameof(MediaSourceGone));
 
     public static string YoutubeDownloading(string quality) =>
         Format(nameof(YoutubeDownloading), ("{quality}", quality));

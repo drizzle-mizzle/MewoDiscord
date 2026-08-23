@@ -77,6 +77,62 @@ public static class MediaPlanParser
         }
     }
 
+    /// <summary>
+    /// Обратная операция: план в тот же JSON, что понимает <see cref="Parse"/>.
+    /// Нужен медиа-сессии — накопленный план уезжает в БД и обратно в промпт, чтобы
+    /// уточнение вроде «ещё пять процентов снизу» считалось от текущей картинки.
+    /// Сериализуется штатным писателем, а не склейкой строк: он же и экранирует,
+    /// поэтому ни табуляции, ни перевода строки в результате не будет — а на этом
+    /// держится формат файла сессий.
+    /// </summary>
+    public static string Serialize(FfmpegRunner.MediaPlan plan)
+    {
+        var map = new Dictionary<string, object>();
+
+        if (plan.Format != null)
+        {
+            map["format"] = plan.Format;
+        }
+
+        if (plan.Start != null)
+        {
+            map["start"] = plan.Start.Value;
+        }
+
+        if (plan.End != null)
+        {
+            map["end"] = plan.End.Value;
+        }
+
+        if (plan.Crop != null)
+        {
+            map["crop"] = new Dictionary<string, int>
+            {
+                ["x"] = plan.Crop.X,
+                ["y"] = plan.Crop.Y,
+                ["w"] = plan.Crop.Width,
+                ["h"] = plan.Crop.Height
+            };
+        }
+
+        if (plan.Width != null)
+        {
+            map["width"] = plan.Width.Value;
+        }
+
+        if (plan.Fps != null)
+        {
+            map["fps"] = plan.Fps.Value;
+        }
+
+        if (plan.AudioOnly)
+        {
+            map["audio"] = true;
+        }
+
+        return JsonSerializer.Serialize(map);
+    }
+
     #region Internals
 
     /// <summary>

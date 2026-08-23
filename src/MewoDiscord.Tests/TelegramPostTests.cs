@@ -36,6 +36,33 @@ public class TelegramPostTests
            href="https://t.me/test_channel/7"></a>
         """;
 
+    /// <summary>
+    /// Вертикальное видео Telegram кладёт на размытую подложку — копию того же файла
+    /// с классом js-message_video_blured. Разметка сокращена до сути (пост t.me/hz_xman/6066).
+    /// </summary>
+    private const string BluredVideoPostHtml = """
+        <div class="tgme_widget_message_author accent_color">
+          <a class="tgme_widget_message_owner_name" href="https://t.me/test_channel"><span dir="auto">Тестовый канал</span></a>
+        </div>
+        <a class="tgme_widget_message_video_player blured js-message_video_player" href="https://t.me/test_channel/6066">
+          <i class="tgme_widget_message_video_thumb" style="background-image:url('https://cdn4.telesco.pe/file/thumb.jpg')"></i>
+          <video src="https://cdn4.telesco.pe/file/clip.mp4?token=abc" class="tgme_widget_message_video blured js-message_video_blured" width="100%" height="100%" muted></video>
+          <div class="tgme_widget_message_video_wrap" style="width:636px;padding-top:133.33333333333%">
+            <video src="https://cdn4.telesco.pe/file/clip.mp4?token=abc" class="tgme_widget_message_video js-message_video" width="100%" height="100%"></video>
+          </div>
+        </a>
+        """;
+
+    /// <summary>
+    /// Тот же дубль, но без класса подложки: страховка на случай, если Telegram его переименует.
+    /// </summary>
+    private const string RepeatedVideoPostHtml = """
+        <div class="tgme_widget_message_video_player js-message_video_player">
+          <video src="https://cdn4.telesco.pe/file/clip.mp4?token=abc" class="tgme_widget_message_video"></video>
+          <video src="https://cdn4.telesco.pe/file/clip.mp4?token=abc" class="tgme_widget_message_video js-message_video"></video>
+        </div>
+        """;
+
     private const string TextOnlyPostHtml = """
         <div class="tgme_widget_message_author accent_color">
           <a class="tgme_widget_message_owner_name" href="https://t.me/test_channel"><span dir="auto">Тестовый канал</span></a>
@@ -54,7 +81,7 @@ public class TelegramPostTests
         Assert.Equal("https://cdn4.telesco.pe/file/clip.mp4", media.Url);
         Assert.Equal("https://cdn4.telesco.pe/file/thumb.jpg", media.ThumbnailUrl);
         Assert.Equal("Первая строка\nвторая & третья", post.Caption);
-        Assert.Equal("Тестовый канал", post.ChannelName);
+        Assert.Equal("Тестовый канал", post.AuthorName);
     }
 
     [Fact]
@@ -75,6 +102,30 @@ public class TelegramPostTests
         var media = Assert.Single(post.Media);
         Assert.False(media.IsVideo);
         Assert.Equal("https://cdn4.telesco.pe/file/picture.jpg", media.Url);
+    }
+
+    /// <summary>
+    /// Из-за подложки такое видео уходило в Discord двумя одинаковыми файлами.
+    /// </summary>
+    [Fact]
+    public void Telegram_РазмытаяПодложкаНеСчитаетсяВторымВидео()
+    {
+        var post = TelegramPostClient.ParsePost(BluredVideoPostHtml);
+
+        Assert.NotNull(post);
+        var media = Assert.Single(post.Media);
+        Assert.True(media.IsVideo);
+        Assert.Equal("https://cdn4.telesco.pe/file/clip.mp4?token=abc", media.Url);
+        Assert.Equal("https://cdn4.telesco.pe/file/thumb.jpg", media.ThumbnailUrl);
+    }
+
+    [Fact]
+    public void Telegram_ОдинИТотЖеАдресНеДублируется()
+    {
+        var post = TelegramPostClient.ParsePost(RepeatedVideoPostHtml);
+
+        Assert.NotNull(post);
+        Assert.Single(post.Media);
     }
 
     [Fact]
@@ -125,13 +176,13 @@ public class TelegramPostTests
     [Fact]
     public void Telegram_КороткаяПодписьПередаётсяКакЕсть()
     {
-        Assert.Equal("первая\nвторая", TelegramMediaHandler.PrepareCaption("первая\nвторая"));
+        Assert.Equal("первая\nвторая", PostMediaHandler.PrepareCaption("первая\nвторая"));
     }
 
     [Fact]
     public void Telegram_ДлиннаяПодписьОбрезается()
     {
-        var caption = TelegramMediaHandler.PrepareCaption(new string('а', 5000));
+        var caption = PostMediaHandler.PrepareCaption(new string('а', 5000));
 
         Assert.EndsWith("…", caption);
         Assert.True(caption.Length < 4000, $"длина {caption.Length} не влезает в лимит компонента");
@@ -144,8 +195,8 @@ public class TelegramPostTests
     [InlineData("https://cdn4.telesco.pe/file/no-extension-token", false, "telegram.jpg")]
     public void Telegram_ИмяФайлаБезопасно(string url, bool isVideo, string expected)
     {
-        var media = new TelegramPostClient.TelegramMedia(url, isVideo, ThumbnailUrl: null);
+        var media = new SocialMedia(url, isVideo, ThumbnailUrl: null);
 
-        Assert.Equal(expected, TelegramMediaHandler.BuildFileName(media));
+        Assert.Equal(expected, PostMediaHandler.BuildFileName(media, "telegram"));
     }
 }

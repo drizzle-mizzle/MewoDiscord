@@ -1,0 +1,361 @@
+using System.Text;
+using System.Text.RegularExpressions;
+
+using Discord;
+using Discord.WebSocket;
+
+using MewoDiscord.Helpers;
+using MewoDiscord.Utils;
+
+namespace MewoDiscord.Handlers;
+
+/// <summary>
+/// Общий ответ на ссылку из соцсети: качает медиа поста и отвечает на исходное сообщение
+/// контейнером Components V2. У источников своё только три вещи — как найти ссылки в тексте,
+/// как достать по ним пост и чем подписаться; всё остальное живёт здесь.
+/// Контейнер выбран вместо embed'а потому, что видео внутри embed'а Discord ботам не отдаёт
+/// (поле video — только для входящих). Такое сообщение не может нести content и embeds,
+/// поэтому весь текст уходит в компоненты.
+/// </summary>
+public static partial class PostMediaHandler
+{
+    /// <summary>
+    /// Сколько ссылок из одного сообщения обрабатываем: дальше это уже не пересказ поста,
+    /// а флуд вложениями.
+    /// </summary>
+    internal const int MaxLinksPerMessage = 3;
+
+    private const int MaxAttachments = 10;
+    private const int MaxFileNameLength = 64;
+
+    /// <summary>
+    /// Лимит описания embed — 4096 символов, оставляем запас на разметку цитаты.
+    /// </summary>
+    private const int MaxCaptionLength = 3800;
+
+    /// <summary>
+    /// Запасной лимит вложения, если гильдию определить не удалось.
+    /// </summary>
+    private const ulong FallbackUploadLimit = 10 * 1024 * 1024;
+
+    /// <summary>
+    /// Оформление ответа: у каждого источника своя акцентная полоса, подпись, иконка
+    /// и текст про невлезший файл.
+    /// </summary>
+    public record PostStyle(
+        Color Accent, string Slug, Func<string> Footer, Func<Emote?> Icon, Func<string, string, string> TooBig);
+
+    /// <summary>
+    /// Ссылка на пост и способ его достать. Потолок вложения приходит в FetchAsync, потому что
+    /// у источника с лесенкой качеств от него зависит, какой файл вообще брать.
+    /// </summary>
+    public record PostRequest(string Url, Func<ulong, Task<SocialPost?>> FetchAsync);
+
+    /// <summary>
+    /// Запускает обработку в фоне: скачивание медиа не должно задерживать остальную
+    /// обработку сообщений канала, которая идёт под общим замком.
+    /// </summary>
+    public static void HandleInBackground(SocketUserMessage message, IReadOnlyList<PostRequest> requests, PostStyle style)
+    {
+        if (requests.Count == 0)
+        {
+            return;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            var replied = false;
+
+            foreach (var request in requests)
+            {
+                try
+                {
+                    replied |= await HandleRequestAsync(message, request, style);
+                }
+                catch (Exception ex)
+                {
+                    BotLogger.Error("Ошибка обработки ссылки {Url}: {Message}", request.Url, ex.Message);
+                }
+            }
+
+            // Своё оформление показали — стандартное превью Discord больше не нужно
+            if (replied)
+            {
+                await SuppressSourceEmbedsAsync(message);
+            }
+        });
+    }
+
+    /// <summary>
+    /// Обрабатывает одну ссылку. Возвращает true, если ответ с медиа отправлен.
+    /// </summary>
+    private static async Task<bool> HandleRequestAsync(SocketUserMessage message, PostRequest request, PostStyle style)
+    {
+        var uploadLimit = GetUploadLimit(message);
+        var post = await request.FetchAsync(uploadLimit);
+
+        if (post == null || post.Media.Count == 0)
+        {
+            return false;
+        }
+
+        var attachments = new List<FileAttachment>();
+        var fileNames = new List<string>();
+        var oversized = new List<string>();
+        string? thumbnailUrl = null;
+
+        // Лимит Discord считается на сообщение целиком, а не на файл: у поста из четырёх
+        // картинок проверка каждой по отдельности пропустила бы то, что вместе не влезает
+        var budget = uploadLimit;
+
+        try
+        {
+            foreach (var media in post.Media.Take(MaxAttachments))
+            {
+                var download = await SocialMediaHttp.TryDownloadAsync(media.Url, budget);
+
+                if (download == null)
+                {
+                    continue;
+                }
+
+                // Не влезло в лимит Discord — покажем превью и ссылку вместо файла
+                if (download.Content == null)
+                {
+                    oversized.Add(FormatSize(download.SizeBytes));
+                    thumbnailUrl ??= media.ThumbnailUrl;
+                    continue;
+                }
+
+                var fileName = BuildFileName(media, style.Slug);
+                attachments.Add(new FileAttachment(download.Content, fileName));
+                fileNames.Add(fileName);
+                budget -= (ulong)download.SizeBytes;
+            }
+
+            if (attachments.Count == 0 && oversized.Count == 0)
+            {
+                return false;
+            }
+
+            var reference = new MessageReference(message.Id, failIfNotExists: false);
+
+            if (attachments.Count > 0)
+            {
+                // Components V2: медиа лежит внутри цветного контейнера
+                await message.Channel.SendFilesAsync(
+                    attachments,
+                    components: BuildContainer(post, request.Url, fileNames, oversized, style),
+                    flags: MessageFlags.ComponentsV2,
+                    allowedMentions: AllowedMentions.None,
+                    messageReference: reference);
+            }
+            else
+            {
+                // Скачать было нечего — остаётся обычный embed с превью и ссылкой
+                await message.Channel.SendMessageAsync(
+                    embed: BuildEmbed(post, request.Url, thumbnailUrl, oversized, style),
+                    allowedMentions: AllowedMentions.None,
+                    messageReference: reference);
+            }
+
+            BotLogger.Information("Пост {Url} — отправлено файлов {Count}", request.Url, attachments.Count);
+            return true;
+        }
+        finally
+        {
+            foreach (var attachment in attachments)
+            {
+                attachment.Dispose();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Собирает контейнер Components V2: цветная полоса, заголовок с подписью, галерея медиа.
+    /// В отличие от embed'а сюда можно положить видео — оно проигрывается внутри контейнера.
+    /// </summary>
+    private static MessageComponent BuildContainer(
+        SocialPost post, string postUrl, IList<string> fileNames, IList<string> oversized, PostStyle style)
+    {
+        var container = new ContainerBuilder().WithAccentColor(style.Accent);
+        var header = BuildHeaderText(post, postUrl);
+
+        if (header != null)
+        {
+            container.AddComponent(new TextDisplayBuilder().WithContent(header));
+        }
+
+        var gallery = new MediaGalleryBuilder();
+
+        foreach (var fileName in fileNames)
+        {
+            gallery.AddItem(new MediaGalleryItemProperties(new UnfurledMediaItemProperties($"attachment://{fileName}")));
+        }
+
+        container.AddComponent(gallery);
+
+        foreach (var size in oversized)
+        {
+            container.AddComponent(new TextDisplayBuilder().WithContent(style.TooBig(size, postUrl)));
+        }
+
+        // «-# » — мелкий текст Discord, заменяет футер embed'а. Иконку сюда можно поставить
+        // только эмодзи: слота для картинки, как у футера embed'а, у компонента нет
+        var icon = style.Icon();
+        var footer = icon == null ? style.Footer() : $"{icon} {style.Footer()}";
+        container.AddComponent(new TextDisplayBuilder().WithContent($"-# {footer}"));
+
+        return new ComponentBuilderV2().AddComponent(container).Build();
+    }
+
+    /// <summary>
+    /// Заголовок контейнера: имя автора ссылкой и текст поста под ним.
+    /// </summary>
+    private static string? BuildHeaderText(SocialPost post, string postUrl)
+    {
+        var lines = new List<string>();
+
+        if (!string.IsNullOrWhiteSpace(post.AuthorName))
+        {
+            // Квадратная скобка в имени оборвала бы подпись markdown-ссылки
+            var name = MarkdownLinkCharsRegex().Replace(post.AuthorName, string.Empty);
+            lines.Add($"### [{name}]({postUrl})");
+        }
+
+        if (post.Caption != null)
+        {
+            lines.Add(PrepareCaption(post.Caption));
+        }
+
+        return lines.Count > 0 ? string.Join("\n", lines) : null;
+    }
+
+    private static Embed BuildEmbed(
+        SocialPost post, string postUrl, string? imageUrl, IList<string> oversized, PostStyle style)
+    {
+        var embed = new EmbedBuilder()
+            .WithColor(style.Accent)
+            .WithUrl(postUrl)
+            .WithFooter(style.Footer(), BotEmotes.IconUrl(style.Icon()));
+
+        if (!string.IsNullOrWhiteSpace(post.AuthorName))
+        {
+            embed.WithAuthor(post.AuthorName, url: postUrl);
+        }
+
+        if (imageUrl != null)
+        {
+            embed.WithImageUrl(imageUrl);
+        }
+
+        var description = new StringBuilder();
+
+        if (post.Caption != null)
+        {
+            description.Append(PrepareCaption(post.Caption));
+        }
+
+        foreach (var size in oversized)
+        {
+            if (description.Length > 0)
+            {
+                description.Append("\n\n");
+            }
+
+            description.Append(style.TooBig(size, postUrl));
+        }
+
+        if (description.Length > 0)
+        {
+            embed.WithDescription(description.ToString());
+        }
+
+        return embed.Build();
+    }
+
+    /// <summary>
+    /// Убирает стандартное превью Discord из исходного сообщения: его заменил наш ответ.
+    /// Само превью не удаляется, а помечается флагом SuppressEmbeds — единственное, что
+    /// Discord позволяет боту сделать с чужим сообщением, и только с правом «Управление сообщениями».
+    /// </summary>
+    private static async Task SuppressSourceEmbedsAsync(SocketUserMessage message)
+    {
+        var guild = (message.Channel as SocketGuildChannel)?.Guild;
+
+        if (guild != null && message.Channel is IGuildChannel guildChannel &&
+            !guild.CurrentUser.GetPermissions(guildChannel).ManageMessages)
+        {
+            BotLogger.Warning("Нет права управлять сообщениями в #{Channel} — превью осталось", message.Channel.Name);
+            return;
+        }
+
+        try
+        {
+            var flags = (message.Flags ?? MessageFlags.None) | MessageFlags.SuppressEmbeds;
+            await message.ModifyAsync(properties => properties.Flags = flags);
+        }
+        catch (Exception ex)
+        {
+            BotLogger.Warning("Не удалось убрать превью в сообщении {MessageId}: {Message}", message.Id, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Готовит текст поста к вставке: обрезает по лимиту компонента.
+    /// </summary>
+    internal static string PrepareCaption(string text)
+    {
+        if (text.Length > MaxCaptionLength)
+        {
+            return string.Concat(text.AsSpan(0, MaxCaptionLength), "…");
+        }
+
+        return text;
+    }
+
+    /// <summary>
+    /// Максимальный размер вложения зависит от уровня буста сервера.
+    /// </summary>
+    private static ulong GetUploadLimit(SocketUserMessage message)
+    {
+        var guild = (message.Channel as SocketGuildChannel)?.Guild;
+        return guild?.MaxUploadLimit ?? FallbackUploadLimit;
+    }
+
+    /// <summary>
+    /// Собирает безопасное имя файла: соцсети часто отдают путь без расширения,
+    /// а у X к нему ещё цепляется query с токеном. slug — как назвать файл, если из адреса
+    /// имени не вышло: по нему в папке загрузок видно, откуда файл.
+    /// </summary>
+    internal static string BuildFileName(SocialMedia media, string slug)
+    {
+        var name = string.Empty;
+
+        if (Uri.TryCreate(media.Url, UriKind.Absolute, out var uri))
+        {
+            name = UnsafeFileCharsRegex().Replace(Path.GetFileName(uri.AbsolutePath), string.Empty);
+        }
+
+        if (name.Length > MaxFileNameLength)
+        {
+            name = name[^MaxFileNameLength..];
+        }
+
+        if (name.Length == 0 || !name.Contains('.'))
+        {
+            name = media.IsVideo ? $"{slug}.mp4" : $"{slug}.jpg";
+        }
+
+        return name;
+    }
+
+    private static string FormatSize(long bytes) =>
+        $"{bytes / 1024d / 1024d:F1} МБ";
+
+    [GeneratedRegex(@"[^A-Za-z0-9._-]")]
+    private static partial Regex UnsafeFileCharsRegex();
+
+    [GeneratedRegex(@"[\[\]]")]
+    private static partial Regex MarkdownLinkCharsRegex();
+}

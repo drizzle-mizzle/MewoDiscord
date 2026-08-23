@@ -102,8 +102,9 @@ public static class MessageHandler
             return;
         }
 
-        // Медиа из Telegram: работает независимо от ИИ и не потребляет сообщение
+        // Медиа из соцсетей: работает независимо от ИИ и не потребляет сообщение
         TelegramMediaHandler.HandleInBackground(userMessage);
+        XMediaHandler.HandleInBackground(userMessage);
 
         // Сессии ChatGPT: реплаи в закреплённые сообщения и пинги в каналах с сессиями
         if (AppConfig.UseChatGpt && await ChatGptSessionHandler.TryHandleAsync(userMessage))
