@@ -4,6 +4,9 @@ WORKDIR /build
 COPY src/MewoDiscord.csproj ./
 RUN dotnet restore
 
+# .editorconfig лежит в корне репозитория: без него StyleCop в образе работает
+# с настройками по умолчанию — сотни лишних предупреждений, а правила проекта не форсируются
+COPY .editorconfig ./
 COPY src/ ./
 RUN dotnet publish MewoDiscord.csproj -c Release -o /app --no-restore
 
