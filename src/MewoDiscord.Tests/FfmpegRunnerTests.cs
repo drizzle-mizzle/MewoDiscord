@@ -85,15 +85,22 @@ public class FfmpegRunnerTests
     [Fact]
     public void Media_ФорматБерётсяИзБелогоСписка()
     {
-        Assert.Equal("gif", FfmpegRunner.ResolveFormat("gif", "clip.mp4"));
-        Assert.Equal("jpg", FfmpegRunner.ResolveFormat("jpeg", "clip.mp4"));
+        Assert.Equal("gif", FfmpegRunner.ResolveFormat("gif", "clip.mp4", animated: true));
+        Assert.Equal("jpg", FfmpegRunner.ResolveFormat("jpeg", "clip.mp4", animated: true));
 
         // Формат не указан — остаётся исходный
-        Assert.Equal("mp4", FfmpegRunner.ResolveFormat(null, "clip.mp4"));
+        Assert.Equal("mp4", FfmpegRunner.ResolveFormat(null, "clip.mp4", animated: true));
+        Assert.Equal("webp", FfmpegRunner.ResolveFormat(null, "pic.webp", animated: false));
 
-        // Всё, чего нет в списке, отбрасывается: имя формата уходит в аргументы
-        Assert.Null(FfmpegRunner.ResolveFormat("exe", "clip.mp4"));
-        Assert.Null(FfmpegRunner.ResolveFormat("../../etc/passwd", "clip.mp4"));
+        // Исходный контейнер вне списка — отказывать в обрезке из-за этого глупо,
+        // берём разумный по умолчанию
+        Assert.Equal("mp4", FfmpegRunner.ResolveFormat(null, "clip.mov", animated: true));
+        Assert.Equal("mp4", FfmpegRunner.ResolveFormat(null, "clip.mkv", animated: true));
+        Assert.Equal("png", FfmpegRunner.ResolveFormat(null, "photo.heic", animated: false));
+
+        // Запрошенный явно формат обязан быть в списке: имя уходит в аргументы
+        Assert.Null(FfmpegRunner.ResolveFormat("exe", "clip.mp4", animated: true));
+        Assert.Null(FfmpegRunner.ResolveFormat("../../etc/passwd", "clip.mp4", animated: true));
     }
 
     [Fact]

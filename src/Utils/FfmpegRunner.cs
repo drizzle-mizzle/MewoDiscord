@@ -90,7 +90,7 @@ public static class FfmpegRunner
     /// </summary>
     public static async Task<MediaResult> RunAsync(byte[] input, string inputFileName, MediaPlan plan, MediaInfo info)
     {
-        var format = ResolveFormat(plan.Format, inputFileName);
+        var format = ResolveFormat(plan.Format, inputFileName, info.DurationSeconds > 0);
 
         if (format == null)
         {
@@ -215,18 +215,30 @@ public static class FfmpegRunner
     }
 
     /// <summary>
-    /// Формат результата: из плана, иначе исходное расширение. null — формат не в белом списке.
+    /// Формат результата. Запрошенный явно обязан быть в белом списке — иначе отказ:
+    /// имя формата уходит в аргументы. Если формат не просили, оставляем исходный,
+    /// а когда и он не из списка (.mov, .mkv, .heic) — берём разумный по умолчанию:
+    /// отказывать в обрезке только из-за контейнера было бы глупо.
     /// </summary>
-    internal static string? ResolveFormat(string? requested, string inputFileName)
+    internal static string? ResolveFormat(string? requested, string inputFileName, bool animated)
     {
-        var format = (requested ?? Path.GetExtension(inputFileName).TrimStart('.')).Trim().ToLowerInvariant();
-
-        if (format == "jpeg")
+        if (!string.IsNullOrWhiteSpace(requested))
         {
-            format = "jpg";
+            var wanted = Normalize(requested);
+
+            return AllowedFormats.Contains(wanted) ? wanted : null;
         }
 
-        return AllowedFormats.Contains(format) ? format : null;
+        var original = Normalize(Path.GetExtension(inputFileName).TrimStart('.'));
+
+        return AllowedFormats.Contains(original) ? original : animated ? "mp4" : "png";
+    }
+
+    private static string Normalize(string format)
+    {
+        var normalized = format.Trim().ToLowerInvariant();
+
+        return normalized == "jpeg" ? "jpg" : normalized;
     }
 
     /// <summary>

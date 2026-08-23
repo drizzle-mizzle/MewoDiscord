@@ -90,28 +90,29 @@ public static class CustomAiActionHandler
         CustomAiActionGate.HasUserMention => DiscordMentions.ExplicitUserIds(message.Content).Any(id => id != botId),
 
         // Работать можно и над своим файлом, и над тем, на который отвечают
-        CustomAiActionGate.HasVideoAttached => HasPlayableMedia(message) || (quoted != null && HasPlayableMedia(quoted)),
+        CustomAiActionGate.HasMediaAttached => HasMedia(message) || (quoted != null && HasMedia(quoted)),
         _ => false
     };
 
     /// <summary>
-    /// Есть ли в сообщении то, что имеет смысл отдавать ffmpeg: видео или анимация.
-    /// Гифка приезжает и вложением, и ссылкой — во втором случае живёт в embed'е.
+    /// Есть ли в сообщении то, что имеет смысл отдавать ffmpeg: видео, гифка или картинка.
+    /// Картинки тоже считаются — «сконвертируй webp в gif» это ровно та же операция.
+    /// Медиа приезжает и вложением, и ссылкой: во втором случае живёт в embed'е.
     /// Проверка чисто по метаданным: гейт работает до похода в ИИ и качать ничего не должен.
     /// </summary>
-    internal static bool HasPlayableMedia(IMessage message)
+    internal static bool HasMedia(IMessage message)
     {
         foreach (var attachment in message.Attachments)
         {
             if (attachment.ContentType?.StartsWith("video/", StringComparison.OrdinalIgnoreCase) == true
-                || attachment.ContentType?.Equals("image/gif", StringComparison.OrdinalIgnoreCase) == true
-                || attachment.Filename.EndsWith(".gif", StringComparison.OrdinalIgnoreCase))
+                || attachment.ContentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) == true)
             {
                 return true;
             }
         }
 
-        return message.Embeds.Any(embed => embed.Type is EmbedType.Gifv or EmbedType.Video);
+        return message.Embeds.Any(embed =>
+            embed.Type is EmbedType.Gifv or EmbedType.Video or EmbedType.Image || embed.Image != null);
     }
 
     /// <summary>
