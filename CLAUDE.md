@@ -146,7 +146,8 @@ docker compose up -d --build
 
 Рядом с ботом поднимается sidecar `cliproxy` (CLIProxyAPI): его `cliproxy/config.yaml`
 монтируется read-only, `cliproxy/management.env` задаёт `MANAGEMENT_PASSWORD` (включает
-management API — без него `/chatgpt login` не работает), токены Codex OAuth — в томе
+management API — без него `/chatgpt-auth login` не работает; сам файл обязателен, иначе
+compose не стартует — создать из `management.example.env`), токены Codex OAuth — в томе
 `cliproxy-auth`, порт 8317 наружу открыт только на `127.0.0.1` (для отладки).
 Основной способ логина — команда `/chatgpt login` в Discord. Запасные пути:
 device flow из консоли (код вводится из любого браузера):

@@ -11,17 +11,16 @@ services:
       - bot-state:/app/state
 
   # OpenAI-совместимый прокси к подписке ChatGPT Plus (Codex OAuth).
-  # Логин — командой /chatgpt login в Discord; запасной путь:
+  # Логин — командой /chatgpt-auth login в Discord; запасной путь:
   # docker compose run --rm cliproxy --codex-device-login
   cliproxy:
     image: eceasy/cli-proxy-api:latest
     container_name: cliproxy
     restart: unless-stopped
+    # Пароль management API (нужен для /chatgpt-auth login).
+    # Файл обязателен: создать из cliproxy/management.example.env
     env_file:
-      # Пароль management API (нужен для /chatgpt login); без файла прокси работает,
-      # но management выключен
-      - path: ./cliproxy/management.env
-        required: false
+      - ./cliproxy/management.env
     volumes:
       - ./cliproxy/config.yaml:/CLIProxyAPI/config.yaml:ro
       - cliproxy-auth:/root/.cli-proxy-api
