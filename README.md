@@ -15,11 +15,14 @@ Discord bot for a small friend server. Built with .NET 10.0 and [Discord.NET](ht
   preview instead, and Discord's own link preview is suppressed on the original message
 - **Verification** — a keyword in the verification channel grants the configured role
 - **Admin slash commands** — bulk message deletion, speaking as the bot and reinstalling the command list
-- **AI chat** — replies when pinged or replied to, and keeps the conversation going for a few messages
-- **AI profanity censor** — answers profanity with a snarky one-liner; dictionary hits are handled right
-  away, while regex hits are first verified by a small model and then appended to the dictionary
+- **ChatGPT sessions** — `/chatgpt new` pins a session to the bot's reply; replying to that message
+  continues the conversation, so several chats can run side by side in one channel. Requests go through
+  a CLIProxyAPI sidecar backed by a ChatGPT Plus subscription, and the model decides on its own whether
+  to answer with text or draw a picture, exactly like the web UI
 
-Everything AI-related is optional and can be turned off with a single config flag (see `UseAi` below).
+The former OpenRouter AI features (joke chat and the profanity censor) are dormant: the code is still
+there, but its entry points, settings and commands are disabled pending a rewrite on top of the proxy
+API. Their prompts are archived in `src/Files/ai_prompts.legacy.ini`.
 
 ## Setup
 
@@ -30,15 +33,15 @@ Everything AI-related is optional and can be turned off with a single config fla
    | Key | Required | Description |
    |---|---|---|
    | `BotToken` | yes | Bot token; the bot refuses to start without it |
-   | `UseAi` | no (default `true`) | Master switch for all AI features and the `/set`, `/toggle` commands |
-   | `OpenRouterApiKey` | if `UseAi: true` | [OpenRouter](https://openrouter.ai) key used for every AI request |
    | `VoiceStatusChannel` | no | Text channel ID for the voice activity log; `0` disables it for public voice channels (private ones always log into themselves) |
-   | `LogsChannel` | no | Text channel ID for bot logs and AI request threads; `0` disables it |
+   | `LogsChannel` | no | Text channel ID for bot logs and the ChatGPT request thread; `0` disables it |
    | `VerificationChannel`, `VerificationRole` | no | Channel ID and role ID for verification; both must be non-zero |
    | `LocalTimeZone` | no | IANA time zone used by `/purge by-time` and log timestamps |
-   | `TelegramProxy` | no | Proxy for Telegram requests (`socks5://host:port` or `http://host:port`), needed where Telegram is blocked by the ISP; empty means a direct connection |
+   | `UseChatGpt` | no (default `false`) | Master switch for the ChatGPT part: sessions, the `/chatgpt` commands and the log thread |
+   | `ChatGptProxyUrl`, `ChatGptProxyApiKey` | if `UseChatGpt: true` | Address and client key of the CLIProxyAPI sidecar |
+   | `ChatGptManagementKey` | if `UseChatGpt: true` | Password of the proxy management API, used by `/chatgpt-auth login` |
 
-   The `AI_*` sections below configure one model, token limit, temperature and prompt pair per task.
+   The `[CHATGPT_SETTINGS]` section holds the chat model, token limit and system prompt.
 
 4. Run:
 ```bash
@@ -47,11 +50,12 @@ dotnet run
 ```
 
 `config.ini` and `messages.ini` are re-read while the bot is running, so texts, models and prompts can be
-tweaked without a restart. `UseAi` is the exception — it is read once at startup.
+tweaked without a restart. `UseChatGpt` is the exception — it is read once at startup.
 
 ## Commands
 
-All commands require the Administrator permission.
+All commands require the Administrator permission, except `/chatgpt new` and `/chatgpt sessions`,
+which are open to everyone.
 
 | Command | Description |
 |---|---|
@@ -59,8 +63,10 @@ All commands require the Administrator permission.
 | `/purge by-time` | Delete messages in a `yyyy-MM-dd HH:mm` range, optionally only from one user |
 | `/say` | Post a message as the bot |
 | `/reinstall` | Wipe every registered slash command, including stale ones, and register the current set |
-| `/set temperature` | Set the temperature of the censor and swear-checker models (requires `UseAi: true`) |
-| `/toggle anti-bydlo` | Turn the AI profanity censor on or off (requires `UseAi: true`) |
+| `/chatgpt new` | Start a ChatGPT session pinned to the bot's reply (anyone can use it) |
+| `/chatgpt sessions` | List sessions with jump links to their latest messages (anyone can use it) |
+| `/chatgpt-auth login` | Sign in to the ChatGPT account through the proxy's OAuth flow |
+| `/chatgpt-auth status` | Show the accounts currently connected to the proxy |
 
 Discord does not allow bulk-deleting messages older than 14 days; both purge commands report how many
 messages were skipped for that reason.
@@ -69,21 +75,32 @@ messages were skipped for that reason.
 
 ```bash
 cd src
-dotnet test --filter "FullyQualifiedName~Regex_|FullyQualifiedName~Store_|FullyQualifiedName~Telegram_|FullyQualifiedName~Watcher_"
+dotnet test --filter "FullyQualifiedName~Regex_|FullyQualifiedName~Store_|FullyQualifiedName~Telegram_|FullyQualifiedName~Watcher_|FullyQualifiedName~Gpt_"
 ```
 
 The `Regex_*` (profanity filter), `Store_*` (channel-name database), `Telegram_*` (widget parsing and
-link detection) and `Watcher_*` (channel rename decisions) tests are self-contained and need no network. The `АИ_*` tests call OpenRouter for real and
-need a working `OpenRouterApiKey`; run them only when you want to check the AI verification step.
+link detection), `Watcher_*` (channel rename decisions) and `Gpt_*` (ChatGPT client and session database)
+tests are self-contained and need no network. The `АИ_Гпт*` tests talk to a running CLIProxyAPI; the
+remaining `АИ_*` ones target the dormant OpenRouter code and only work if its sections are restored
+to `config.ini`.
 
 ## Docker
 
 The image is built from source; `config.ini` is kept out of the image and mounted read-only instead.
-Logs live in the `bot-logs` volume and the original-channel-name database in `bot-state`, so both survive
-`docker compose up --build`.
+Logs live in the `bot-logs` volume and runtime state (channel names, ChatGPT sessions) in `bot-state`,
+so both survive `docker compose up --build`. A `cliproxy` sidecar (CLIProxyAPI) runs next to the bot and
+serves the ChatGPT part; its config comes from `cliproxy/config.yaml`, the management password from
+`cliproxy/management.env`, and Codex OAuth tokens live in the `cliproxy-auth` volume.
 
 ```bash
 docker compose up -d --build
+```
+
+Sign in to the ChatGPT account with `/chatgpt-auth login` in Discord. As a fallback, the proxy supports a
+console device flow:
+
+```bash
+docker compose run --rm cliproxy --codex-device-login
 ```
 
 ## Publish

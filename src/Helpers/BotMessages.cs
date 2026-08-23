@@ -95,11 +95,8 @@ public static class BotMessages
     public static string ChatGptStatusUnavailable() =>
         Format(nameof(ChatGptStatusUnavailable));
 
-    public static string ChatGptSessionNewChat() =>
-        Format(nameof(ChatGptSessionNewChat));
-
-    public static string ChatGptSessionNewImage() =>
-        Format(nameof(ChatGptSessionNewImage));
+    public static string ChatGptSessionNew() =>
+        Format(nameof(ChatGptSessionNew));
 
     public static string ChatGptSessionsEmpty() =>
         Format(nameof(ChatGptSessionsEmpty));
@@ -109,9 +106,6 @@ public static class BotMessages
 
     public static string ChatGptRequestFailed() =>
         Format(nameof(ChatGptRequestFailed));
-
-    public static string ChatGptImageFailed() =>
-        Format(nameof(ChatGptImageFailed));
 
     public static string ChatGptImageTooBig(string size) =>
         Format(nameof(ChatGptImageTooBig), ("{size}", size));

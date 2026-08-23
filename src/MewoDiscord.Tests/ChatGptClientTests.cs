@@ -165,50 +165,70 @@ public class ChatGptClientTests
     {
         const string json = """{"id":"x","choices":[{"index":0,"message":{"role":"assistant","content":"Привет!"}}]}""";
 
-        Assert.Equal("Привет!", ChatGptClient.ParseChatResponse(json));
-        Assert.Equal(string.Empty, ChatGptClient.ParseChatResponse("""{"choices":[]}"""));
-        Assert.Equal(string.Empty, ChatGptClient.ParseChatResponse("не json"));
+        var reply = ChatGptClient.ParseChatResponse(json);
+        Assert.Equal("Привет!", reply.Text);
+        Assert.Empty(reply.Images);
+
+        Assert.Equal(string.Empty, ChatGptClient.ParseChatResponse("""{"choices":[]}""").Text);
+        Assert.Equal(string.Empty, ChatGptClient.ParseChatResponse("не json").Text);
     }
 
     [Fact]
-    public void Gpt_ЗапросГенерацииСодержитПараметры()
+    public void Gpt_КартинкиИзОтветаЧатаИзвлекаются()
     {
-        var json = ChatGptClient.BuildGenerationRequestJson("gpt-image-2", "кот в сапогах", "1024x1024", "high");
+        // Прокси кладёт нарисованное моделью в message.images, а не в content
+        var dataUrl = ChatGptClient.BuildDataUrl("image/png", PngBytes);
+        var json = """{"choices":[{"message":{"role":"assistant","content":"Готово","images":[{"type":"image_url","index":0,"image_url":{"url":"URL"}}]}}]}"""
+            .Replace("URL", dataUrl);
 
-        Assert.Contains("\"model\":\"gpt-image-2\"", json);
-        Assert.Contains("\"size\":\"1024x1024\"", json);
-        Assert.Contains("\"quality\":\"high\"", json);
-        Assert.Contains("\"response_format\":\"b64_json\"", json);
-        Assert.DoesNotContain("\"images\"", json);
+        var reply = ChatGptClient.ParseChatResponse(json);
+
+        Assert.Equal("Готово", reply.Text);
+        Assert.Single(reply.Images);
+        Assert.Equal(PngBytes, reply.Images[0].Content);
+        Assert.Equal("image/png", reply.Images[0].MimeType);
     }
 
     [Fact]
-    public void Gpt_ЗапросПравкиСодержитВсеРеференсы()
+    public void Gpt_БитыйDataUrlПропускается()
     {
-        var first = ChatGptClient.BuildDataUrl("image/png", PngBytes);
-        var second = ChatGptClient.BuildDataUrl("image/jpeg", JpegBytes);
-        var json = ChatGptClient.BuildEditRequestJson("gpt-image-2", "объедини", [first, second], "auto", "auto");
-
-        Assert.Contains(first, json);
-        Assert.Contains(second, json);
-        Assert.Contains("\"image_url\"", json);
+        Assert.Null(ChatGptClient.ParseImageDataUrl(null));
+        Assert.Null(ChatGptClient.ParseImageDataUrl("https://example.com/cat.png"));
+        Assert.Null(ChatGptClient.ParseImageDataUrl("data:image/png,без-base64"));
+        Assert.Null(ChatGptClient.ParseImageDataUrl("data:image/png;base64,не-base64!"));
+        Assert.NotNull(ChatGptClient.ParseImageDataUrl(ChatGptClient.BuildDataUrl("image/png", PngBytes)));
     }
 
     [Fact]
-    public void Gpt_КартинкаИзвлекаетсяИзОтвета()
+    public void Gpt_ПоследняяКартинкаПодмешиваетсяВЗапрос()
     {
-        var b64 = Convert.ToBase64String(PngBytes);
-        var json = $$"""{"created":1,"data":[{"b64_json":"{{b64}}","revised_prompt":"улучшенный промпт"}]}""";
+        var turn = new ChatGptClient.ChatTurn("user", "сделай его рыжим", []);
+        var carry = ChatGptClient.BuildDataUrl("image/png", PngBytes);
 
-        var image = ChatGptClient.ParseImageResponse(json);
+        // Без carry картинок в запросе нет
+        Assert.DoesNotContain("image_url", ChatGptClient.BuildChatRequestJson("gpt-5.5", 100, [], turn));
 
-        Assert.NotNull(image);
-        Assert.Equal(PngBytes, image.Content);
-        Assert.Equal("image/png", image.MimeType);
-        Assert.Equal("улучшенный промпт", image.RevisedPrompt);
+        // С carry — уходит частью текущего хода
+        var json = ChatGptClient.BuildChatRequestJson("gpt-5.5", 100, [], turn, null, carry);
+        Assert.Contains("\"type\":\"image_url\"", json);
+        Assert.Contains(carry, json);
+    }
 
-        Assert.Null(ChatGptClient.ParseImageResponse("""{"data":[]}"""));
-        Assert.Null(ChatGptClient.ParseImageResponse("не json"));
+    [Fact]
+    public void Gpt_АссистентскийХодОписываетКартинки()
+    {
+        var image = new ChatGptClient.GeneratedImage(PngBytes, "image/png", null);
+
+        // Только текст — как есть
+        Assert.Equal("привет", ChatGptClient.BuildAssistantTurnText(new ChatGptClient.ChatReply("привет", [])));
+
+        // Картинка без текста — пометка вместо байтов
+        Assert.Equal("[сгенерировано изображение]", ChatGptClient.BuildAssistantTurnText(new ChatGptClient.ChatReply(string.Empty, [image])));
+
+        // Текст и картинки — и то, и другое
+        var mixed = ChatGptClient.BuildAssistantTurnText(new ChatGptClient.ChatReply("готово", [image, image]));
+        Assert.Contains("готово", mixed);
+        Assert.Contains("изображений: 2", mixed);
     }
 
     [Fact]
@@ -233,13 +253,11 @@ public class ChatGptClientTests
         var session = new ChatGptSession();
         session.Append(new ChatGptClient.ChatTurn("user", "привет", []));
         session.LastImage = new ChatGptClient.GeneratedImage(PngBytes, "image/png", null);
-        session.LastReferences = [new ChatGptClient.InputFile("cat.png", PngBytes)];
 
         session.Reset();
 
         Assert.Empty(session.History);
         Assert.False(session.HasImage);
-        Assert.Empty(session.LastReferences);
     }
 
     [Fact]
@@ -253,24 +271,6 @@ public class ChatGptClientTests
 
         var withoutPrompt = ChatGptClient.BuildChatRequestJson("gpt-5.5", 100, [], turn);
         Assert.DoesNotContain("\"role\":\"system\"", withoutPrompt);
-    }
-
-    [Fact]
-    public void Gpt_ExtraReferencesПопадаютВПравку()
-    {
-        var lastImage = new ChatGptClient.GeneratedImage(PngBytes, "image/png", null);
-        var original = new ChatGptClient.InputFile("orig.png", PngBytes, "image/png");
-        var extra = new ChatGptClient.InputFile("extra.jpg", JpegBytes, "image/jpeg");
-
-        // Последняя картинка + доп-референс; исходные не включены
-        var urls = ChatGptClient.CollectEditDataUrls(lastImage, [original], [extra], includeOriginalReferences: false);
-        Assert.Equal(2, urls.Count);
-        Assert.StartsWith("data:image/png", urls[0]);
-        Assert.StartsWith("data:image/jpeg", urls[1]);
-
-        // С исходными — все три
-        var withOriginals = ChatGptClient.CollectEditDataUrls(lastImage, [original], [extra], includeOriginalReferences: true);
-        Assert.Equal(3, withOriginals.Count);
     }
 
     [Fact]
@@ -372,41 +372,39 @@ public class ChatGptClientTests
         var session = new ChatGptSession();
         var reply = await ChatGptClient.ChatAsync(session, "Ответь одним словом: столица Франции?");
 
-        _testOutputHelper.WriteLine($"Ответ: {reply}");
-        Assert.False(string.IsNullOrWhiteSpace(reply));
+        _testOutputHelper.WriteLine($"Ответ: {reply.Text}");
+        Assert.False(string.IsNullOrWhiteSpace(reply.Text));
         Assert.Equal(2, session.History.Count);
     }
 
     /// <summary>
-    /// Живая генерация: маленькая картинка с нуля.
+    /// Живая генерация: модель сама переходит в режим рисования по просьбе в чате.
     /// </summary>
     [Fact]
-    public async Task АИ_ГптГенерируетКартинку()
+    public async Task АИ_ГптРисуетПоПросьбеВЧате()
     {
         var session = new ChatGptSession();
-        var image = await ChatGptClient.GenerateImageAsync(session, "Простая иконка кота, минимализм");
+        var reply = await ChatGptClient.ChatAsync(session, "Нарисуй простую иконку кота, минимализм");
 
-        _testOutputHelper.WriteLine($"Картинка: {image?.MimeType}, {image?.Content.Length} байт");
-        Assert.NotNull(image);
-        Assert.True(image.Content.Length > 0);
+        _testOutputHelper.WriteLine($"Текст: {reply.Text}; картинок: {reply.Images.Count}");
+        Assert.NotEmpty(reply.Images);
         Assert.True(session.HasImage);
     }
 
     /// <summary>
-    /// Живая правка в той же сессии: генерация, затем изменение без новой сессии.
+    /// Живая правка в той же сессии: нарисованное продолжает править без новой сессии.
     /// </summary>
     [Fact]
     public async Task АИ_ГптПравитКартинкуВСессии()
     {
         var session = new ChatGptSession();
-        var first = await ChatGptClient.GenerateImageAsync(session, "Простая иконка кота, минимализм");
-        Assert.NotNull(first);
+        var first = await ChatGptClient.ChatAsync(session, "Нарисуй простую иконку кота, минимализм");
+        Assert.NotEmpty(first.Images);
 
-        var second = await ChatGptClient.ContinueImageAsync(session, "Сделай кота рыжим");
+        var second = await ChatGptClient.ChatAsync(session, "Сделай кота рыжим");
 
-        _testOutputHelper.WriteLine($"Правка: {second?.MimeType}, {second?.Content.Length} байт");
-        Assert.NotNull(second);
-        Assert.NotEqual(first.Content, second.Content);
-        Assert.Same(second, session.LastImage);
+        _testOutputHelper.WriteLine($"Правка: картинок {second.Images.Count}");
+        Assert.NotEmpty(second.Images);
+        Assert.NotEqual(first.Images[0].Content, second.Images[0].Content);
     }
 }

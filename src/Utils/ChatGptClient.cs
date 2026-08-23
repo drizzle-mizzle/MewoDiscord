@@ -8,15 +8,14 @@ namespace MewoDiscord.Utils;
 /// <summary>
 /// Клиент ChatGPT через CLIProxyAPI — локальный OpenAI-совместимый прокси, который расходует
 /// квоту подписки ChatGPT Plus (Codex OAuth) вместо API-биллинга.
-/// Чат — POST /v1/chat/completions, генерация с нуля — /v1/images/generations,
-/// генерация с референсами и правки — /v1/images/edits (JSON-вариант с data-URL).
-/// Прокси stateless, история диалога живёт в <see cref="ChatGptSession"/> на нашей стороне.
+/// Единственный путь — POST /v1/chat/completions: прокси подмешивает в запрос инструмент
+/// image_generation, поэтому модель сама решает, ответить текстом или нарисовать картинку,
+/// как в веб-интерфейсе. Прокси stateless, история диалога живёт
+/// в <see cref="ChatGptSession"/> на нашей стороне.
 /// </summary>
 public static class ChatGptClient
 {
     private const string ChatCompletionsPath = "/v1/chat/completions";
-    private const string ImageGenerationsPath = "/v1/images/generations";
-    private const string ImageEditsPath = "/v1/images/edits";
 
     // Management API CLIProxyAPI — OAuth-логин и список аккаунтов
     private const string ManagementAuthUrlPath = "/v0/management/codex-auth-url";
@@ -70,6 +69,16 @@ public static class ChatGptClient
     public record GeneratedImage(byte[] Content, string MimeType, string? RevisedPrompt);
 
     /// <summary>
+    /// Ответ чата: текст и картинки, которые модель решила нарисовать (может быть и то, и другое).
+    /// </summary>
+    public record ChatReply(string Text, IReadOnlyList<GeneratedImage> Images);
+
+    /// <summary>
+    /// Пустой ответ — вернуть при любой ошибке.
+    /// </summary>
+    private static readonly ChatReply EmptyReply = new(string.Empty, []);
+
+    /// <summary>
     /// Ход диалога: роль, текст и data-URL приложенных картинок.
     /// </summary>
     internal record ChatTurn(string Role, string Text, IReadOnlyList<string> ImageDataUrls);
@@ -97,18 +106,25 @@ public static class ChatGptClient
     /// <summary>
     /// Отправляет сообщение в чат с учётом истории сессии. Картинки из files уходят
     /// мультимодальными частями, текстовые файлы вклеиваются в текст, остальные форматы
-    /// пропускаются с пометкой. Возвращает пустую строку при любой ошибке.
+    /// пропускаются с пометкой. Модель сама решает, ответить текстом или нарисовать
+    /// картинку (инструмент image_generation прокси подмешивает в каждый запрос),
+    /// поэтому ответ может нести и текст, и изображения.
     /// </summary>
-    public static async Task<string> ChatAsync(ChatGptSession session, string text, IReadOnlyList<InputFile>? files = null)
+    public static async Task<ChatReply> ChatAsync(ChatGptSession session, string text, IReadOnlyList<InputFile>? files = null)
     {
         if (!IsReady())
         {
-            return string.Empty;
+            return EmptyReply;
         }
 
         var cfg = AppConfig.ChatGptSettings;
         var turn = PrepareUserTurn(text, files);
-        var json = BuildChatRequestJson(cfg.ChatModel, cfg.MaxTokens, session.History, turn, cfg.SystemPrompt);
+
+        // Последняя сгенерированная картинка подмешивается в текущий запрос, но не в историю:
+        // картинки из ассистентских сообщений прокси отбрасывает (в Responses API они уходят
+        // только от роли user), а без неё модель не сможет править нарисованное
+        var carry = session.LastImage == null ? null : BuildDataUrl(session.LastImage.MimeType, session.LastImage.Content);
+        var json = BuildChatRequestJson(cfg.ChatModel, cfg.MaxTokens, session.History, turn, cfg.SystemPrompt, carry);
 
         BotLogger.LogAi(BotLogger.ChatGptThreadKey, "📤 Чат ({Model}, картинок: {Images}):\n{Text}", cfg.ChatModel, turn.ImageDataUrls.Count, turn.Text);
 
@@ -116,153 +132,28 @@ public static class ChatGptClient
 
         if (responseBody == null)
         {
-            return string.Empty;
+            return EmptyReply;
         }
 
         var reply = ParseChatResponse(responseBody);
 
-        if (string.IsNullOrEmpty(reply))
+        if (reply.Text.Length == 0 && reply.Images.Count == 0)
         {
             BotLogger.LogAi(BotLogger.ChatGptThreadKey, "⚠️ Пустой ответ от ChatGPT");
-            return string.Empty;
+            return EmptyReply;
         }
 
         session.Append(turn);
-        session.Append(new ChatTurn("assistant", reply, []));
-        BotLogger.LogAi(BotLogger.ChatGptThreadKey, "📥 Ответ:\n{Reply}", reply);
+        session.Append(new ChatTurn("assistant", BuildAssistantTurnText(reply), []));
+
+        if (reply.Images.Count > 0)
+        {
+            session.LastImage = reply.Images[^1];
+        }
+
+        BotLogger.LogAi(BotLogger.ChatGptThreadKey, "📥 Ответ (картинок: {Images}):\n{Reply}", reply.Images.Count, reply.Text.Length > 0 ? reply.Text : "(без текста)");
 
         return reply;
-    }
-
-    /// <summary>
-    /// Генерирует картинку с нуля по промпту. Результат запоминается в сессии,
-    /// дальше его можно править через <see cref="ContinueImageAsync"/>.
-    /// Возвращает null при любой ошибке.
-    /// </summary>
-    public static async Task<GeneratedImage?> GenerateImageAsync(ChatGptSession session, string prompt)
-    {
-        if (!IsReady())
-        {
-            return null;
-        }
-
-        var cfg = AppConfig.ChatGptSettings;
-        var json = BuildGenerationRequestJson(cfg.ImageModel, prompt, cfg.ImageSize, cfg.ImageQuality);
-
-        BotLogger.LogAi(BotLogger.ChatGptThreadKey, "🎨 Генерация ({Model}, {Size}, {Quality}): {Prompt}", cfg.ImageModel, cfg.ImageSize, cfg.ImageQuality, prompt);
-
-        var responseBody = await PostJsonAsync(ImageGenerationsPath, json);
-        var image = responseBody == null ? null : ParseImageResponse(responseBody);
-
-        if (image != null)
-        {
-            RememberGeneration(session, prompt, image, references: []);
-        }
-
-        return image;
-    }
-
-    /// <summary>
-    /// Генерирует картинку по промпту с опорой на референсные изображения (несколько).
-    /// Результат и референсы запоминаются в сессии. Возвращает null при любой ошибке.
-    /// </summary>
-    public static async Task<GeneratedImage?> GenerateImageAsync(ChatGptSession session, string prompt, IReadOnlyList<InputFile> referenceImages)
-    {
-        if (!IsReady())
-        {
-            return null;
-        }
-
-        var references = TakeValidImages(referenceImages);
-
-        if (references.Count == 0)
-        {
-            BotLogger.Error("Генерация с референсами: среди {Count} файлов нет пригодных картинок", referenceImages.Count);
-            return null;
-        }
-
-        var dataUrls = references.Select(r => BuildDataUrl(ResolveImageMime(r)!, r.Content)).ToList();
-        var image = await EditImageAsync(prompt, dataUrls, $"референсов: {references.Count}");
-
-        if (image != null)
-        {
-            RememberGeneration(session, prompt, image, references);
-        }
-
-        return image;
-    }
-
-    /// <summary>
-    /// Продолжает сессию: правит последнюю сгенерированную картинку по новой инструкции,
-    /// не создавая новую сессию. extraReferences — дополнительные картинки к этой правке,
-    /// includeOriginalReferences добавляет референсы последней генерации.
-    /// Возвращает null при любой ошибке.
-    /// </summary>
-    public static async Task<GeneratedImage?> ContinueImageAsync(ChatGptSession session, string instruction, IReadOnlyList<InputFile>? extraReferences = null, bool includeOriginalReferences = false)
-    {
-        if (!IsReady())
-        {
-            return null;
-        }
-
-        if (session.LastImage == null)
-        {
-            BotLogger.Warning("Правка картинки: в сессии ещё нет сгенерированного изображения");
-            return null;
-        }
-
-        var dataUrls = CollectEditDataUrls(session.LastImage, session.LastReferences, extraReferences, includeOriginalReferences);
-        var image = await EditImageAsync(instruction, dataUrls, "правка последней картинки");
-
-        if (image != null)
-        {
-            RememberGeneration(session, instruction, image, session.LastReferences);
-        }
-
-        return image;
-    }
-
-    /// <summary>
-    /// Собирает картинки правки: последняя сгенерированная, затем дополнительные,
-    /// затем исходные референсы — всё в пределах <see cref="MaxImagesPerRequest"/>.
-    /// </summary>
-    internal static List<string> CollectEditDataUrls(GeneratedImage lastImage, IReadOnlyList<InputFile> originalReferences, IReadOnlyList<InputFile>? extraReferences, bool includeOriginalReferences)
-    {
-        var dataUrls = new List<string>
-        {
-            BuildDataUrl(lastImage.MimeType, lastImage.Content)
-        };
-
-        foreach (var reference in TakeValidImages(extraReferences ?? []))
-        {
-            if (dataUrls.Count >= MaxImagesPerRequest)
-            {
-                break;
-            }
-
-            dataUrls.Add(BuildDataUrl(ResolveImageMime(reference)!, reference.Content));
-        }
-
-        if (includeOriginalReferences)
-        {
-            foreach (var reference in originalReferences)
-            {
-                if (dataUrls.Count >= MaxImagesPerRequest)
-                {
-                    break;
-                }
-
-                // Референсы с диска могли повредиться — непригодные пропускаем
-                var mime = ResolveImageMime(reference);
-
-                if (mime != null)
-                {
-                    dataUrls.Add(BuildDataUrl(mime, reference.Content));
-                }
-            }
-        }
-
-        return dataUrls;
     }
 
     /// <summary>
@@ -373,35 +264,6 @@ public static class ChatGptClient
     }
 
     #region Внутренности
-
-    /// <summary>
-    /// Общий путь правки: POST /v1/images/edits с картинками в виде data-URL.
-    /// </summary>
-    private static async Task<GeneratedImage?> EditImageAsync(string prompt, IReadOnlyList<string> imageDataUrls, string logNote)
-    {
-        var cfg = AppConfig.ChatGptSettings;
-        var json = BuildEditRequestJson(cfg.ImageModel, prompt, imageDataUrls, cfg.ImageSize, cfg.ImageQuality);
-
-        BotLogger.LogAi(BotLogger.ChatGptThreadKey, "🖌️ Правка ({Model}, {Note}): {Prompt}", cfg.ImageModel, logNote, prompt);
-
-        var responseBody = await PostJsonAsync(ImageEditsPath, json);
-
-        return responseBody == null ? null : ParseImageResponse(responseBody);
-    }
-
-    /// <summary>
-    /// Обновляет сессию после удачной генерации: картинка, референсы и текстовый след
-    /// в истории чата (байты картинок в историю не попадают).
-    /// </summary>
-    private static void RememberGeneration(ChatGptSession session, string prompt, GeneratedImage image, IReadOnlyList<InputFile> references)
-    {
-        session.LastImage = image;
-        session.LastReferences = references;
-        session.Append(new ChatTurn("user", prompt, []));
-        session.Append(new ChatTurn("assistant", $"[сгенерировано изображение: {image.RevisedPrompt ?? prompt}]", []));
-
-        BotLogger.LogAi(BotLogger.ChatGptThreadKey, "📥 Картинка {Mime}, {Bytes} байт{Revised}", image.MimeType, image.Content.Length, image.RevisedPrompt == null ? string.Empty : $"\nrevised prompt: {image.RevisedPrompt}");
-    }
 
     /// <summary>
     /// Проверяет доступность management API: флаг, адрес и пароль management.
@@ -696,29 +558,6 @@ public static class ChatGptClient
     }
 
     /// <summary>
-    /// Оставляет из списка только пригодные картинки, не больше <see cref="MaxImagesPerRequest"/>.
-    /// </summary>
-    private static List<InputFile> TakeValidImages(IReadOnlyList<InputFile> files)
-    {
-        var result = new List<InputFile>();
-
-        foreach (var file in files)
-        {
-            if (result.Count >= MaxImagesPerRequest)
-            {
-                break;
-            }
-
-            if (file.Content.Length <= MaxInputFileBytes && ResolveImageMime(file) != null)
-            {
-                result.Add(file);
-            }
-        }
-
-        return result;
-    }
-
-    /// <summary>
     /// MIME картинки: из явно заданного типа, по сигнатуре содержимого или по расширению.
     /// null — файл не является картинкой поддерживаемого формата.
     /// </summary>
@@ -802,9 +641,10 @@ public static class ChatGptClient
 
     /// <summary>
     /// JSON запроса чата: content строкой без картинок и массивом частей с ними.
-    /// Непустой systemPrompt уходит первым сообщением с ролью system.
+    /// Непустой systemPrompt уходит первым сообщением с ролью system,
+    /// carryImageDataUrl — последняя сгенерированная картинка, приложенная к текущему ходу.
     /// </summary>
-    internal static string BuildChatRequestJson(string model, int maxTokens, IReadOnlyList<ChatTurn> history, ChatTurn userTurn, string? systemPrompt = null)
+    internal static string BuildChatRequestJson(string model, int maxTokens, IReadOnlyList<ChatTurn> history, ChatTurn userTurn, string? systemPrompt = null, string? carryImageDataUrl = null)
     {
         var messages = new List<ChatApiMessage>();
 
@@ -818,7 +658,11 @@ public static class ChatGptClient
             messages.Add(ToApiMessage(turn));
         }
 
-        messages.Add(ToApiMessage(userTurn));
+        var current = carryImageDataUrl != null && userTurn.ImageDataUrls.Count < MaxImagesPerRequest
+            ? userTurn with { ImageDataUrls = [.. userTurn.ImageDataUrls, carryImageDataUrl] }
+            : userTurn;
+
+        messages.Add(ToApiMessage(current));
 
         var request = new ChatApiRequest
         {
@@ -831,81 +675,88 @@ public static class ChatGptClient
     }
 
     /// <summary>
-    /// Извлекает текст ответа чата. Пустая строка — ответа нет.
+    /// Извлекает ответ чата: текст и картинки. Картинки прокси кладёт не в content,
+    /// а отдельным полем choices[].message.images[] в виде data-URL.
+    /// Пустой ответ — ни текста, ни картинок.
     /// </summary>
-    internal static string ParseChatResponse(string json)
+    internal static ChatReply ParseChatResponse(string json)
     {
         try
         {
             var response = JsonSerializer.Deserialize<ChatApiResponse>(json, JsonOptions);
+            var message = response?.Choices?.FirstOrDefault()?.Message;
+            var images = new List<GeneratedImage>();
 
-            return response?.Choices?.FirstOrDefault()?.Message?.Content ?? string.Empty;
+            foreach (var item in message?.Images ?? [])
+            {
+                var image = ParseImageDataUrl(item.ImageUrl?.Url);
+
+                if (image != null)
+                {
+                    images.Add(image);
+                }
+            }
+
+            return new ChatReply(message?.Content ?? string.Empty, images);
         }
         catch (JsonException)
         {
-            return string.Empty;
+            return EmptyReply;
         }
     }
 
     /// <summary>
-    /// JSON запроса генерации с нуля.
+    /// Разбирает data-URL картинки из ответа. null — строка не data-URL или битый base64.
     /// </summary>
-    internal static string BuildGenerationRequestJson(string model, string prompt, string size, string quality)
+    internal static GeneratedImage? ParseImageDataUrl(string? dataUrl)
     {
-        var request = new ImageApiRequest
+        const string marker = ";base64,";
+
+        if (dataUrl == null || !dataUrl.StartsWith("data:", StringComparison.Ordinal))
         {
-            Model = model,
-            Prompt = prompt,
-            Size = size,
-            Quality = quality
-        };
+            return null;
+        }
 
-        return JsonSerializer.Serialize(request, JsonOptions);
-    }
+        var markerIndex = dataUrl.IndexOf(marker, StringComparison.Ordinal);
 
-    /// <summary>
-    /// JSON запроса правки: те же параметры плюс картинки в data-URL
-    /// (формат images[].image_url принимает CLIProxyAPI).
-    /// </summary>
-    internal static string BuildEditRequestJson(string model, string prompt, IReadOnlyList<string> imageDataUrls, string size, string quality)
-    {
-        var request = new ImageApiRequest
+        if (markerIndex < 0)
         {
-            Model = model,
-            Prompt = prompt,
-            Size = size,
-            Quality = quality,
-            Images = imageDataUrls.Select(url => new ImageRef { ImageUrl = url }).ToList()
-        };
+            return null;
+        }
 
-        return JsonSerializer.Serialize(request, JsonOptions);
-    }
-
-    /// <summary>
-    /// Извлекает картинку из ответа генерации/правки. MIME определяется по содержимому,
-    /// по умолчанию — PNG. null — картинки в ответе нет.
-    /// </summary>
-    internal static GeneratedImage? ParseImageResponse(string json)
-    {
         try
         {
-            var response = JsonSerializer.Deserialize<ImageApiResponse>(json, JsonOptions);
-            var item = response?.Data?.FirstOrDefault();
+            var content = Convert.FromBase64String(dataUrl[(markerIndex + marker.Length)..]);
 
-            if (string.IsNullOrEmpty(item?.B64Json))
+            if (content.Length == 0)
             {
                 return null;
             }
 
-            var content = Convert.FromBase64String(item.B64Json);
-            var mime = DetectImageMime(content) ?? "image/png";
+            var declaredMime = dataUrl[5..markerIndex];
 
-            return new GeneratedImage(content, mime, item.RevisedPrompt);
+            return new GeneratedImage(content, DetectImageMime(content) ?? (declaredMime.Length > 0 ? declaredMime : "image/png"), null);
         }
-        catch (Exception ex) when (ex is JsonException or FormatException)
+        catch (FormatException)
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// Текст ассистентского хода для истории: картинки в неё не кладём (прокси всё равно
+    /// отбросит их у роли assistant), вместо них — пометка, чтобы диалог оставался связным.
+    /// </summary>
+    internal static string BuildAssistantTurnText(ChatReply reply)
+    {
+        if (reply.Images.Count == 0)
+        {
+            return reply.Text;
+        }
+
+        var note = reply.Images.Count == 1 ? "[сгенерировано изображение]" : $"[сгенерировано изображений: {reply.Images.Count}]";
+
+        return reply.Text.Length > 0 ? $"{reply.Text}\n{note}" : note;
     }
 
     /// <summary>
@@ -995,51 +846,24 @@ public static class ChatGptClient
     {
         [JsonPropertyName("content")]
         public string? Content { get; init; }
-    }
-
-    private class ImageApiRequest
-    {
-        [JsonPropertyName("model")]
-        public required string Model { get; init; }
-
-        [JsonPropertyName("prompt")]
-        public required string Prompt { get; init; }
-
-        [JsonPropertyName("size")]
-        public required string Size { get; init; }
-
-        [JsonPropertyName("quality")]
-        public required string Quality { get; init; }
-
-        [JsonPropertyName("response_format")]
-        public string ResponseFormat { get; init; } = "b64_json";
 
         /// <summary>
-        /// Референсы для /v1/images/edits; null — запрос генерации с нуля.
+        /// Нестандартное поле прокси: картинки, нарисованные инструментом image_generation.
         /// </summary>
         [JsonPropertyName("images")]
-        public List<ImageRef>? Images { get; init; }
+        public List<ChatImageItem>? Images { get; init; }
     }
 
-    private class ImageRef
+    private class ChatImageItem
     {
         [JsonPropertyName("image_url")]
-        public required string ImageUrl { get; init; }
+        public ChatImageUrl? ImageUrl { get; init; }
     }
 
-    private class ImageApiResponse
+    private class ChatImageUrl
     {
-        [JsonPropertyName("data")]
-        public List<ImageApiItem>? Data { get; init; }
-    }
-
-    private class ImageApiItem
-    {
-        [JsonPropertyName("b64_json")]
-        public string? B64Json { get; init; }
-
-        [JsonPropertyName("revised_prompt")]
-        public string? RevisedPrompt { get; init; }
+        [JsonPropertyName("url")]
+        public string? Url { get; init; }
     }
 
     private class LoginStartResponse

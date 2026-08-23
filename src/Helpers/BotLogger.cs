@@ -8,7 +8,7 @@ namespace MewoDiscord.Helpers;
 
 /// <summary>
 /// Логгер-обёртка: пишет в Serilog и отправляет сообщения в Discord-треды.
-/// При старте создаёт тред для слеш-команд и, если ИИ включён, по треду на каждую ИИ-конфигурацию.
+/// При старте создаёт тред для слеш-команд и, если включена ChatGPT-часть, тред «ChatGPT».
 /// </summary>
 public static partial class BotLogger
 {
@@ -26,17 +26,6 @@ public static partial class BotLogger
     /// Треды текущей сессии: ключ → тред.
     /// </summary>
     private static readonly Dictionary<string, IThreadChannel> _threads = new();
-
-    /// <summary>
-    /// AI-секции, для которых создаются отдельные треды.
-    /// </summary>
-    private static readonly (string Key, string DisplayName, Func<AppConfig.AiSectionConfig> GetConfig)[] AiSections =
-    [
-        ("AI_CENSOR_SETTINGS", "AI Censor", () => AppConfig.CensorSettings),
-        ("AI_SWEARS_CHECKER_SETTINGS", "AI Swears Checker", () => AppConfig.SwearsCheckerSettings),
-        ("AI_CHAT_SETTINGS", "AI Chat", () => AppConfig.ChatSettings),
-        ("AI_CONTINUATION_CHECKER_SETTINGS", "AI Continuation Checker", () => AppConfig.ContinuationCheckerSettings),
-    ];
 
     /// <summary>
     /// Устанавливает клиент Discord и читает ID канала логов из конфига.
@@ -68,12 +57,11 @@ public static partial class BotLogger
         try
         {
             // Стартовое сообщение
-            var aiStatus = AppConfig.UseAi ? "включён ✅" : "выключен ❌";
             var chatGptStatus = AppConfig.UseChatGpt ? "включён ✅" : "выключен ❌";
 
             var startEmbed = new EmbedBuilder()
                 .WithTitle("Бот запущен")
-                .WithDescription($"Сессия: {GetLocalNow():yyyy-MM-dd HH:mm:ss}\nИИ: {aiStatus}\nChatGPT: {chatGptStatus}")
+                .WithDescription($"Сессия: {GetLocalNow():yyyy-MM-dd HH:mm:ss}\nChatGPT: {chatGptStatus}")
                 .WithColor(Color.Green)
                 .WithCurrentTimestamp()
                 .Build();
@@ -87,29 +75,7 @@ public static partial class BotLogger
 
             _threads[CommandsThreadKey] = cmdThread;
 
-            // Треды для каждой AI-конфигурации — только при включённом ИИ
-            if (AppConfig.UseAi)
-            {
-                foreach (var (key, displayName, getConfig) in AiSections)
-                {
-                    var thread = await channel.CreateThreadAsync(
-                        displayName,
-                        ThreadType.PublicThread);
-
-                    _threads[key] = thread;
-
-                    // Первое сообщение — текущая конфигурация
-                    var cfg = getConfig();
-                    var configText = $"⚙️ **Конфигурация {key}**\n" +
-                                     $"Модель: `{cfg.Model}`\n" +
-                                     $"Температура: `{cfg.Temperature}`\n" +
-                                     $"MaxTokens: `{cfg.MaxTokens}`";
-
-                    await thread.SendMessageAsync(configText);
-                }
-            }
-
-            // Тред ChatGPT-части — независим от UseAi
+            // Тред ChatGPT-части
             if (AppConfig.UseChatGpt)
             {
                 var thread = await channel.CreateThreadAsync(
@@ -120,10 +86,8 @@ public static partial class BotLogger
 
                 var cfg = AppConfig.ChatGptSettings;
                 var configText = $"⚙️ **Конфигурация {cfg.SectionName}**\n" +
-                                 $"Модель чата: `{cfg.ChatModel}`\n" +
-                                 $"MaxTokens: `{cfg.MaxTokens}`\n" +
-                                 $"Модель изображений: `{cfg.ImageModel}`\n" +
-                                 $"Размер: `{cfg.ImageSize}`, качество: `{cfg.ImageQuality}`";
+                                 $"Модель: `{cfg.ChatModel}`\n" +
+                                 $"MaxTokens: `{cfg.MaxTokens}`";
 
                 await thread.SendMessageAsync(configText);
             }

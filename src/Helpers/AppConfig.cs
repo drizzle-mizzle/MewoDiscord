@@ -10,31 +10,15 @@ public static class AppConfig
 {
     public static string BotToken => Get("COMMON", nameof(BotToken));
     public static ulong VoiceStatusChannel => GetUlong("COMMON", nameof(VoiceStatusChannel));
-    public static string OpenRouterApiKey => Get("COMMON", nameof(OpenRouterApiKey));
     public static ulong LogsChannel => GetUlong("COMMON", nameof(LogsChannel));
     public static ulong VerificationChannel => GetUlong("COMMON", nameof(VerificationChannel));
     public static ulong VerificationRole => GetUlong("COMMON", nameof(VerificationRole));
     public static string LocalTimeZone => Get("COMMON", nameof(LocalTimeZone), "Europe/Kiev");
 
     /// <summary>
-    /// Прокси для запросов к Telegram (socks5://хост:порт или http://хост:порт).
-    /// Нужен там, где Telegram заблокирован провайдером. Пусто — идём напрямую.
-    /// Читается один раз при создании HttpClient, горячая перезагрузка его не подхватывает.
-    /// </summary>
-    public static string TelegramProxy => Get("COMMON", nameof(TelegramProxy));
-
-    /// <summary>
-    /// Включены ли ИИ-функции (чат, цензор мата, проверки через OpenRouter).
-    /// В отличие от остальных настроек фиксируется при запуске: горячая перезагрузка
-    /// config.ini его не меняет, иначе обработчики разошлись бы с набором
-    /// зарегистрированных в Discord команд.
-    /// </summary>
-    public static bool UseAi { get; private set; }
-
-    /// <summary>
-    /// Включена ли ChatGPT-часть (чат и генерация изображений через CLIProxyAPI).
-    /// Как и <see cref="UseAi"/>, фиксируется при запуске: от флага зависит создание
-    /// лог-треда, горячая перезагрузка его не подхватывает.
+    /// Включена ли ChatGPT-часть (чат с генерацией изображений через CLIProxyAPI).
+    /// В отличие от остальных настроек фиксируется при запуске: от флага зависит
+    /// создание лог-треда и набор команд, горячая перезагрузка его не подхватывает.
     /// </summary>
     public static bool UseChatGpt { get; private set; }
 
@@ -57,31 +41,9 @@ public static class AppConfig
 
     public static ChatGptSectionConfig ChatGptSettings { get; } = new("CHATGPT_SETTINGS");
 
-    public static AiSectionConfig CensorSettings { get; } = new("AI_CENSOR_SETTINGS");
-    public static AiSectionConfig SwearsCheckerSettings { get; } = new("AI_SWEARS_CHECKER_SETTINGS");
-    public static AiSectionConfig ChatSettings { get; } = new("AI_CHAT_SETTINGS");
-    public static AiSectionConfig ContinuationCheckerSettings { get; } = new("AI_CONTINUATION_CHECKER_SETTINGS");
-
     /// <summary>
-    /// Типизированная секция настроек ИИ-провайдера (модели, токены, промпты).
-    /// </summary>
-    public record AiSectionConfig(string SectionName)
-    {
-        public string Model => Get(SectionName, "Model", "x-ai/grok-3-mini");
-
-        public int MaxTokens => GetInt(SectionName, "MaxTokens", 50);
-
-        public double Temperature => GetDouble(SectionName, "Temperature", 1.0);
-
-        public string SystemPrompt => Get(SectionName, "SystemPrompt");
-
-        public string MessagePrompt => Get(SectionName, "MessagePrompt");
-    }
-
-    /// <summary>
-    /// Типизированная секция настроек ChatGPT (модели чата и генерации изображений).
-    /// Отдельный рекорд, а не <see cref="AiSectionConfig"/>: набор ключей другой
-    /// (нет температуры и промптов, есть параметры изображений).
+    /// Типизированная секция настроек ChatGPT. Параметров изображений здесь нет —
+    /// картинки рисует сама модель по ходу диалога, как в веб-интерфейсе.
     /// </summary>
     public record ChatGptSectionConfig(string SectionName)
     {
@@ -90,12 +52,6 @@ public static class AppConfig
         public int MaxTokens => GetInt(SectionName, "MaxTokens", 2048);
 
         public string SystemPrompt => Get(SectionName, "SystemPrompt");
-
-        public string ImageModel => Get(SectionName, "ImageModel", "gpt-image-2");
-
-        public string ImageSize => Get(SectionName, "ImageSize", "1024x1024");
-
-        public string ImageQuality => Get(SectionName, "ImageQuality", "high");
     }
 
     #region Internals
@@ -120,7 +76,6 @@ public static class AppConfig
     static AppConfig()
     {
         Reload();
-        UseAi = GetBool("COMMON", nameof(UseAi), true);
         UseChatGpt = GetBool("COMMON", nameof(UseChatGpt), false);
 
         try

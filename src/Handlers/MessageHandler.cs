@@ -105,43 +105,14 @@ public static class MessageHandler
         // Медиа из Telegram: работает независимо от ИИ и не потребляет сообщение
         TelegramMediaHandler.HandleInBackground(userMessage);
 
-        // Сессии ChatGPT: реплаи в закреплённые сообщения и пинги в каналах с сессиями.
-        // В таких каналах перехватывает обращения к боту раньше шуточного чата (UseAi)
+        // Сессии ChatGPT: реплаи в закреплённые сообщения и пинги в каналах с сессиями
         if (AppConfig.UseChatGpt && await ChatGptSessionHandler.TryHandleAsync(userMessage))
         {
             return;
         }
 
-        // Всё, что ниже, — ИИ-функции
-        if (!AppConfig.UseAi)
-        {
-            return;
-        }
-
-        // 1. Пинг / реплай бота → AI_CHAT (без ИИ-проверок)
-        if (IsBotAddressed(userMessage))
-        {
-            await HandleChatAsync(userMessage);
-            return;
-        }
-
-        // 2. Быстрая проверка на мат (BogaNet + словарь, без ИИ) → AI_CENSOR
-        if (IsCensorEnabled && await TryHandleProfanityFastAsync(userMessage))
-        {
-            return;
-        }
-
-        // 3. Continuation (ИИ-проверка, пока канал отслеживается после ответа бота) → AI_CHAT
-        if (await TryContinueConversationAsync(userMessage))
-        {
-            return;
-        }
-
-        // 4. Проверка на мат с ИИ (регулярка + верификация) → AI_CENSOR
-        if (IsCensorEnabled && await TryHandleProfanityWithAiAsync(userMessage))
-        {
-            return;
-        }
+        // Ниже была ИИ-часть на OpenRouter (шуточный чат и цензор мата): точки входа убраны,
+        // код ниже по файлу недостижим и ждёт переезда на прокси-API
     }
 
     /// <summary>
@@ -307,7 +278,7 @@ public static class MessageHandler
     /// </summary>
     internal static async Task<bool> VerifySwearsWithAiAsync(List<string> foundWords)
     {
-        var cfg = AppConfig.SwearsCheckerSettings;
+        var cfg = AiClient.SwearsCheckerSettings;
         var swearsStr = string.Join(", ", foundWords);
         var prompt = cfg.MessagePrompt.Replace("{swears}", swearsStr);
 
@@ -376,7 +347,7 @@ public static class MessageHandler
 
     private static async Task HandleProfanityAsync(SocketUserMessage message, IList<string> badWords)
     {
-        var cfg = AppConfig.CensorSettings;
+        var cfg = AiClient.CensorSettings;
         var userId = message.Author.Id;
         var guild = (message.Channel as SocketGuildChannel)?.Guild;
 
@@ -590,7 +561,7 @@ public static class MessageHandler
     /// </summary>
     private static async Task HandleChatAsync(SocketUserMessage message)
     {
-        var cfg = AppConfig.ChatSettings;
+        var cfg = AiClient.ChatSettings;
 
         if (string.IsNullOrEmpty(cfg.SystemPrompt))
         {
@@ -673,7 +644,7 @@ public static class MessageHandler
     /// </summary>
     private static async Task<bool> CheckContinuationWithAiAsync(SocketUserMessage message)
     {
-        var cfg = AppConfig.ContinuationCheckerSettings;
+        var cfg = AiClient.ContinuationCheckerSettings;
 
         if (string.IsNullOrEmpty(cfg.SystemPrompt))
         {

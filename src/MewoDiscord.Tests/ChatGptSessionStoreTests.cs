@@ -41,10 +41,9 @@ public class ChatGptSessionStoreTests : IDisposable
     [Fact]
     public void Gpt_СессияСохраняетсяИЗагружается()
     {
-        var entry = ChatGptSessionStore.Create(1, 2, 100, ChatGptSessionType.ImageGen);
+        var entry = ChatGptSessionStore.Create(1, 2, 100);
         entry.Runtime.Append(new ChatGptClient.ChatTurn("user", "нарисуй кота", []));
         entry.Runtime.LastImage = new ChatGptClient.GeneratedImage(PngBytes, "image/png", "рыжий кот");
-        entry.Runtime.LastReferences = [new ChatGptClient.InputFile("ref.png", PngBytes, "image/png")];
         ChatGptSessionStore.Rebind(entry, 200);
 
         // Перезагрузка с диска — как после рестарта бота
@@ -53,7 +52,6 @@ public class ChatGptSessionStoreTests : IDisposable
         var restored = ChatGptSessionStore.FindByMessageId(200);
         Assert.NotNull(restored);
         Assert.Equal(entry.Id, restored.Id);
-        Assert.Equal(ChatGptSessionType.ImageGen, restored.Type);
         Assert.Equal(1ul, restored.GuildId);
         Assert.Equal(2ul, restored.ChannelId);
         Assert.Single(restored.Runtime.History);
@@ -61,14 +59,12 @@ public class ChatGptSessionStoreTests : IDisposable
         Assert.NotNull(restored.Runtime.LastImage);
         Assert.Equal(PngBytes, restored.Runtime.LastImage.Content);
         Assert.Equal("рыжий кот", restored.Runtime.LastImage.RevisedPrompt);
-        Assert.Single(restored.Runtime.LastReferences);
-        Assert.Equal("ref.png", restored.Runtime.LastReferences[0].FileName);
     }
 
     [Fact]
     public void Gpt_ПривязкаПереезжаетПриRebind()
     {
-        var entry = ChatGptSessionStore.Create(1, 2, 100, ChatGptSessionType.Chat);
+        var entry = ChatGptSessionStore.Create(1, 2, 100);
 
         ChatGptSessionStore.Rebind(entry, 200);
 
@@ -79,11 +75,11 @@ public class ChatGptSessionStoreTests : IDisposable
     [Fact]
     public void Gpt_ЛимитСессийВытесняетСтарейшую()
     {
-        var first = ChatGptSessionStore.Create(1, 2, 1, ChatGptSessionType.Chat);
+        var first = ChatGptSessionStore.Create(1, 2, 1);
 
         for (var i = 2; i <= ChatGptSessionStore.MaxSessions + 1; i++)
         {
-            ChatGptSessionStore.Create(1, 2, (ulong)i, ChatGptSessionType.Chat);
+            ChatGptSessionStore.Create(1, 2, (ulong)i);
         }
 
         Assert.Equal(ChatGptSessionStore.MaxSessions, ChatGptSessionStore.All().Count);
@@ -97,9 +93,9 @@ public class ChatGptSessionStoreTests : IDisposable
     [Fact]
     public void Gpt_ПоследняяАктивнаяВыбираетсяПоКаналу()
     {
-        var first = ChatGptSessionStore.Create(1, 10, 100, ChatGptSessionType.Chat);
-        var second = ChatGptSessionStore.Create(1, 10, 200, ChatGptSessionType.Chat);
-        ChatGptSessionStore.Create(1, 99, 300, ChatGptSessionType.Chat);
+        var first = ChatGptSessionStore.Create(1, 10, 100);
+        var second = ChatGptSessionStore.Create(1, 10, 200);
+        ChatGptSessionStore.Create(1, 99, 300);
 
         Assert.Same(second, ChatGptSessionStore.FindLastActive(10));
 
@@ -120,14 +116,15 @@ public class ChatGptSessionStoreTests : IDisposable
     [Fact]
     public void Gpt_БитыеСтрокиИндексаПропускаются()
     {
-        var valid = ChatGptSessionStore.Create(1, 2, 100, ChatGptSessionType.Chat);
+        var valid = ChatGptSessionStore.Create(1, 2, 100);
 
         var indexPath = Path.Combine(_stateDirectory, "chatgpt_sessions.txt");
         File.AppendAllLines(indexPath,
         [
             "мусор",
-            "a|b|c|d|e|f",
-            "id2|1|2|3|неведомый-тип|2026-01-01T00:00:00.0000000Z",
+            "a|b|c|d|e",
+            "id2|1|2|3|не-дата",
+            "id3|1|2|3|2026-01-01T00:00:00.0000000Z|лишнее-поле",
             string.Empty
         ]);
 

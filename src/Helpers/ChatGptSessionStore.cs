@@ -5,18 +5,9 @@ using MewoDiscord.Utils;
 namespace MewoDiscord.Helpers;
 
 /// <summary>
-/// Тип сессии ChatGPT: диалог или генерация изображений.
-/// </summary>
-public enum ChatGptSessionType
-{
-    Chat,
-    ImageGen
-}
-
-/// <summary>
 /// БД сессий ChatGPT. Каждая сессия закреплена за последним сообщением бота в ней —
 /// реплай на это сообщение продолжает диалог. Метаданные лежат в state/chatgpt_sessions.txt
-/// (строка на сессию), полное состояние (история, последняя картинка, референсы) —
+/// (строка на сессию), полное состояние (история и последняя картинка) —
 /// в state/chatgpt_sessions/{id}.json, чтобы сессии переживали перезапуск бота.
 /// Сессий не больше <see cref="MaxSessions"/> — лишние вытесняются по старшинству.
 /// </summary>
@@ -49,8 +40,6 @@ public static class ChatGptSessionStore
         public required ulong GuildId { get; init; }
 
         public required ulong ChannelId { get; init; }
-
-        public required ChatGptSessionType Type { get; init; }
 
         public ulong LastMessageId { get; internal set; }
 
@@ -110,7 +99,7 @@ public static class ChatGptSessionStore
     /// <summary>
     /// Создаёт сессию, закреплённую за сообщением бота. Сверх лимита — вытесняет старейшую.
     /// </summary>
-    public static SessionEntry Create(ulong guildId, ulong channelId, ulong messageId, ChatGptSessionType type)
+    public static SessionEntry Create(ulong guildId, ulong channelId, ulong messageId)
     {
         lock (_lock)
         {
@@ -119,7 +108,6 @@ public static class ChatGptSessionStore
                 Id = Guid.NewGuid().ToString("N"),
                 GuildId = guildId,
                 ChannelId = channelId,
-                Type = type,
                 LastMessageId = messageId,
                 UpdatedAtUtc = NextStamp()
             };
@@ -218,14 +206,14 @@ public static class ChatGptSessionStore
     }
 
     /// <summary>
-    /// Разбирает строку индекса: id|guildId|channelId|lastMessageId|type|updatedAtUtc.
+    /// Разбирает строку индекса: id|guildId|channelId|lastMessageId|updatedAtUtc.
     /// null — строка битая, пропускаем.
     /// </summary>
     internal static SessionEntry? ParseIndexLine(string line)
     {
         var parts = line.Trim().Split('|');
 
-        if (parts.Length != 6 || parts[0].Length == 0)
+        if (parts.Length != 5 || parts[0].Length == 0)
         {
             return null;
         }
@@ -237,12 +225,7 @@ public static class ChatGptSessionStore
             return null;
         }
 
-        if (!TryParseType(parts[4], out var type))
-        {
-            return null;
-        }
-
-        if (!DateTime.TryParse(parts[5], CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var updatedAt))
+        if (!DateTime.TryParse(parts[4], CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var updatedAt))
         {
             return null;
         }
@@ -252,29 +235,9 @@ public static class ChatGptSessionStore
             Id = parts[0],
             GuildId = guildId,
             ChannelId = channelId,
-            Type = type,
             LastMessageId = messageId,
             UpdatedAtUtc = updatedAt
         };
-    }
-
-    internal static string TypeToString(ChatGptSessionType type) =>
-        type == ChatGptSessionType.ImageGen ? "image-gen" : "chat";
-
-    internal static bool TryParseType(string value, out ChatGptSessionType type)
-    {
-        switch (value)
-        {
-            case "chat":
-                type = ChatGptSessionType.Chat;
-                return true;
-            case "image-gen":
-                type = ChatGptSessionType.ImageGen;
-                return true;
-            default:
-                type = ChatGptSessionType.Chat;
-                return false;
-        }
     }
 
     private static void SaveIndex()
@@ -286,7 +249,7 @@ public static class ChatGptSessionStore
             // Пишем во временный файл и подменяем — краш не оставит обрезанную БД
             var tempPath = IndexPath + ".tmp";
             var lines = _sessions.Values.Select(e =>
-                $"{e.Id}|{e.GuildId}|{e.ChannelId}|{e.LastMessageId}|{TypeToString(e.Type)}|{e.UpdatedAtUtc.ToString("O", CultureInfo.InvariantCulture)}");
+                $"{e.Id}|{e.GuildId}|{e.ChannelId}|{e.LastMessageId}|{e.UpdatedAtUtc.ToString("O", CultureInfo.InvariantCulture)}");
             File.WriteAllLines(tempPath, lines);
             File.Move(tempPath, IndexPath, overwrite: true);
         }
@@ -317,10 +280,7 @@ public static class ChatGptSessionStore
                         Mime = entry.Runtime.LastImage.MimeType,
                         RevisedPrompt = entry.Runtime.LastImage.RevisedPrompt,
                         Content = entry.Runtime.LastImage.Content
-                    },
-                References = entry.Runtime.LastReferences
-                    .Select(r => new FileDto { FileName = r.FileName, Mime = r.MimeType, Content = r.Content })
-                    .ToList()
+                    }
             };
 
             var path = Path.Combine(StateDirectory, entry.Id + ".json");
@@ -368,11 +328,6 @@ public static class ChatGptSessionStore
             {
                 entry.Runtime.LastImage = new ChatGptClient.GeneratedImage(dto.LastImage.Content, dto.LastImage.Mime, dto.LastImage.RevisedPrompt);
             }
-
-            entry.Runtime.LastReferences = (dto.References ?? [])
-                .Where(r => r.FileName != null && r.Content != null)
-                .Select(r => new ChatGptClient.InputFile(r.FileName!, r.Content!, r.Mime))
-                .ToList();
         }
         catch (Exception ex)
         {
@@ -402,8 +357,6 @@ public static class ChatGptSessionStore
         public List<TurnDto>? Turns { get; init; }
 
         public ImageDto? LastImage { get; init; }
-
-        public List<FileDto>? References { get; init; }
     }
 
     private class TurnDto
@@ -420,15 +373,6 @@ public static class ChatGptSessionStore
         public string? Mime { get; init; }
 
         public string? RevisedPrompt { get; init; }
-
-        public byte[]? Content { get; init; }
-    }
-
-    private class FileDto
-    {
-        public string? FileName { get; init; }
-
-        public string? Mime { get; init; }
 
         public byte[]? Content { get; init; }
     }

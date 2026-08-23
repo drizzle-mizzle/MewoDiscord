@@ -129,18 +129,11 @@ public static partial class ChatGptSessionHandler
                 return;
             }
 
-            BotLogger.LogAi(BotLogger.ChatGptThreadKey, "Хит в сессию {Id} ({Type}) от {User}", entry.Id, ChatGptSessionStore.TypeToString(entry.Type), message.Author.Username);
+            BotLogger.LogAi(BotLogger.ChatGptThreadKey, "Хит в сессию {Id} от {User}", entry.Id, message.Author.Username);
 
             using var typing = message.Channel.EnterTypingState();
 
-            if (entry.Type == ChatGptSessionType.Chat)
-            {
-                await HandleChatHitAsync(message, entry, text, files);
-            }
-            else
-            {
-                await HandleImageHitAsync(message, entry, text, files);
-            }
+            await HandleReplyAsync(message, entry, text, files);
         }
         finally
         {
@@ -149,89 +142,88 @@ public static partial class ChatGptSessionHandler
     }
 
     /// <summary>
-    /// Чат: ответ модели реплаем, длинный — чанками; привязка сессии переезжает
-    /// на последний чанк. При ошибке привязка не трогается — реплай можно повторить.
+    /// Отправляет ответ модели: текст чанками по 2000 символов, картинки — вложениями.
+    /// Модель сама решает, рисовать ли, поэтому в ответе может быть и то, и другое.
+    /// Привязка сессии переезжает на последнее отправленное сообщение; при ошибке
+    /// не трогается — реплай на прежнее сообщение можно повторить.
     /// </summary>
-    private static async Task HandleChatHitAsync(SocketUserMessage message, ChatGptSessionStore.SessionEntry entry, string text, List<ChatGptClient.InputFile> files)
+    private static async Task HandleReplyAsync(SocketUserMessage message, ChatGptSessionStore.SessionEntry entry, string text, List<ChatGptClient.InputFile> files)
     {
         var reply = await ChatGptClient.ChatAsync(entry.Runtime, text, files);
 
-        if (string.IsNullOrEmpty(reply))
+        if (reply.Text.Length == 0 && reply.Images.Count == 0)
         {
             await ReplyAsync(message, BotMessages.ChatGptRequestFailed());
             return;
         }
 
+        // Картинки крупнее лимита сервера не грузятся — вместо них пометка в тексте
+        var uploadLimit = ((message.Channel as SocketGuildChannel)?.Guild)?.MaxUploadLimit ?? FallbackUploadLimit;
+        var images = new List<ChatGptClient.GeneratedImage>();
+        var replyText = reply.Text;
+
+        foreach (var image in reply.Images)
+        {
+            if ((ulong)image.Content.Length <= uploadLimit)
+            {
+                images.Add(image);
+            }
+            else
+            {
+                replyText = $"{replyText}\n{BotMessages.ChatGptImageTooBig(FormatSize(image.Content.Length))}".Trim();
+            }
+        }
+
+        var chunks = replyText.Length > 0 ? BotLogger.SplitMessage(replyText) : [];
+
+        // Текст без картинок: последний чанк уходит обычным сообщением,
+        // с картинками — они прикрепляются к последнему сообщению
+        var plainChunks = images.Count > 0 ? chunks.Count : chunks.Count - 1;
         IUserMessage? last = null;
         var first = true;
 
-        foreach (var chunk in BotLogger.SplitMessage(reply))
+        for (var i = 0; i < plainChunks; i++)
         {
             last = await message.Channel.SendMessageAsync(
-                chunk,
+                chunks[i],
                 allowedMentions: AllowedMentions.None,
-                messageReference: first ? new MessageReference(message.Id, failIfNotExists: false) : null);
+                messageReference: first ? BuildReference(message) : null);
             first = false;
+        }
+
+        if (images.Count > 0)
+        {
+            var attachments = images
+                .Select((image, index) => new FileAttachment(new MemoryStream(image.Content), BuildImageFileName(image.MimeType, index)))
+                .ToList();
+
+            try
+            {
+                last = await message.Channel.SendFilesAsync(
+                    attachments,
+                    allowedMentions: AllowedMentions.None,
+                    messageReference: first ? BuildReference(message) : null);
+            }
+            finally
+            {
+                foreach (var attachment in attachments)
+                {
+                    attachment.Dispose();
+                }
+            }
+        }
+        else if (chunks.Count > 0)
+        {
+            last = await message.Channel.SendMessageAsync(
+                chunks[^1],
+                allowedMentions: AllowedMentions.None,
+                messageReference: first ? BuildReference(message) : null);
         }
 
         if (last != null)
         {
             ChatGptSessionStore.Rebind(entry, last.Id);
         }
-    }
-
-    /// <summary>
-    /// Картинки: первый хит — генерация (вложения — референсы), дальше — правка
-    /// последней картинки (вложения — дополнительные референсы).
-    /// </summary>
-    private static async Task HandleImageHitAsync(SocketUserMessage message, ChatGptSessionStore.SessionEntry entry, string text, List<ChatGptClient.InputFile> files)
-    {
-        ChatGptClient.GeneratedImage? image;
-
-        if (entry.Runtime.HasImage)
-        {
-            image = await ChatGptClient.ContinueImageAsync(entry.Runtime, text, extraReferences: files.Count > 0 ? files : null);
-        }
-        else if (files.Count > 0)
-        {
-            image = await ChatGptClient.GenerateImageAsync(entry.Runtime, text, files);
-        }
-        else
-        {
-            image = await ChatGptClient.GenerateImageAsync(entry.Runtime, text);
-        }
-
-        if (image == null)
-        {
-            await ReplyAsync(message, BotMessages.ChatGptImageFailed());
-            return;
-        }
-
-        var uploadLimit = ((message.Channel as SocketGuildChannel)?.Guild)?.MaxUploadLimit ?? FallbackUploadLimit;
-
-        if ((ulong)image.Content.Length > uploadLimit)
-        {
-            // Картинка уже в состоянии сессии — привязку двигаем на сообщение об ошибке,
-            // чтобы правки реплаем оставались возможны
-            var notice = await ReplyAsync(message, BotMessages.ChatGptImageTooBig(FormatSize(image.Content.Length)));
-
-            if (notice != null)
-            {
-                ChatGptSessionStore.Rebind(entry, notice.Id);
-            }
-
-            return;
-        }
-
-        using var stream = new MemoryStream(image.Content);
-        using var attachment = new FileAttachment(stream, BuildImageFileName(image.MimeType));
-
-        var sent = await message.Channel.SendFilesAsync(
-            [attachment],
-            allowedMentions: AllowedMentions.None,
-            messageReference: new MessageReference(message.Id, failIfNotExists: false));
-
-        ChatGptSessionStore.Rebind(entry, sent.Id);
     }
 
     /// <summary>
@@ -304,14 +296,21 @@ public static partial class ChatGptSessionHandler
         }
     }
 
-    private static string BuildImageFileName(string mime) =>
-        mime switch
+    private static MessageReference BuildReference(SocketUserMessage message) =>
+        new(message.Id, failIfNotExists: false);
+
+    private static string BuildImageFileName(string mime, int index)
+    {
+        var extension = mime switch
         {
-            "image/jpeg" => "gpt-image.jpg",
-            "image/webp" => "gpt-image.webp",
-            "image/gif" => "gpt-image.gif",
-            _ => "gpt-image.png"
+            "image/jpeg" => "jpg",
+            "image/webp" => "webp",
+            "image/gif" => "gif",
+            _ => "png"
         };
+
+        return index == 0 ? $"gpt-image.{extension}" : $"gpt-image-{index + 1}.{extension}";
+    }
 
     private static string FormatSize(long bytes) =>
         $"{bytes / 1024d / 1024d:F1} МБ";

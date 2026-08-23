@@ -184,25 +184,7 @@ public static partial class TelegramPostClient
 
     private static HttpClient CreateClient()
     {
-        var handler = new HttpClientHandler();
-        var proxy = AppConfig.TelegramProxy;
-
-        // Telegram заблокирован у части провайдеров — тогда нужен прокси из конфига
-        if (!string.IsNullOrWhiteSpace(proxy))
-        {
-            try
-            {
-                handler.Proxy = new WebProxy(proxy);
-                handler.UseProxy = true;
-            }
-            catch (Exception ex)
-            {
-                // Опечатка в адресе не должна ронять всю фичу — идём напрямую
-                BotLogger.Error("Некорректный TelegramProxy «{Proxy}»: {Message}", proxy, ex.Message);
-            }
-        }
-
-        var client = new HttpClient(handler)
+        var client = new HttpClient
         {
             Timeout = TimeSpan.FromSeconds(RequestTimeoutSeconds)
         };

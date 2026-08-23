@@ -7,17 +7,14 @@ namespace MewoDiscord.Commands;
 /// <summary>
 /// Сессии ChatGPT — доступны всем участникам сервера (без DefaultMemberPermissions).
 /// /chatgpt new закрепляет сессию за ответным сообщением: реплай на него — хит в сессию.
+/// Тип сессии не задаётся: модель сама решает, ответить текстом или нарисовать картинку.
 /// /chatgpt sessions — список сессий со ссылками на их последние сообщения.
 /// </summary>
 [Group("chatgpt", "Сессии ChatGPT")]
 public class ChatGptSessionCommands : InteractionModuleBase<SocketInteractionContext>
 {
     [SlashCommand("new", "Создать новую сессию ChatGPT")]
-    public async Task New(
-        [Summary("тип", "Тип сессии")]
-        [Choice("chat", "chat")]
-        [Choice("image-gen", "image-gen")]
-        string тип = "chat")
+    public async Task New()
     {
         if (Context.Guild is null)
         {
@@ -25,17 +22,13 @@ public class ChatGptSessionCommands : InteractionModuleBase<SocketInteractionCon
             return;
         }
 
-        var type = тип == "image-gen" ? ChatGptSessionType.ImageGen : ChatGptSessionType.Chat;
-
         // Ответ публичный: на него нужно реплаить, ephemeral-сообщения для этого не годятся
-        await RespondAsync(type == ChatGptSessionType.Chat
-            ? BotMessages.ChatGptSessionNewChat()
-            : BotMessages.ChatGptSessionNewImage());
+        await RespondAsync(BotMessages.ChatGptSessionNew());
 
         var original = await GetOriginalResponseAsync();
-        var entry = ChatGptSessionStore.Create(Context.Guild.Id, Context.Channel.Id, original.Id, type);
+        var entry = ChatGptSessionStore.Create(Context.Guild.Id, Context.Channel.Id, original.Id);
 
-        BotLogger.LogCommand("/chatgpt new {Type} — {User}: сессия {Id}", тип, Context.User.Username, entry.Id);
+        BotLogger.LogCommand("/chatgpt new — {User}: сессия {Id}", Context.User.Username, entry.Id);
     }
 
     [SlashCommand("sessions", "Список сессий ChatGPT")]
@@ -57,9 +50,8 @@ public class ChatGptSessionCommands : InteractionModuleBase<SocketInteractionCon
         {
             var entry = all[i];
             var link = $"https://discord.com/channels/{entry.GuildId}/{entry.ChannelId}/{entry.LastMessageId}";
-            var icon = entry.Type == ChatGptSessionType.ImageGen ? "🎨" : "💬";
             var unix = new DateTimeOffset(DateTime.SpecifyKind(entry.UpdatedAtUtc, DateTimeKind.Utc)).ToUnixTimeSeconds();
-            lines.Add($"{i + 1}. [перейти]({link}) — {icon} {ChatGptSessionStore.TypeToString(entry.Type)} — <t:{unix}:R>");
+            lines.Add($"{i + 1}. [перейти]({link}) — <t:{unix}:R>");
         }
 
         var embed = new EmbedBuilder()

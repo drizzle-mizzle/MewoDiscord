@@ -13,14 +13,10 @@ public class ChatGptSession
     internal List<ChatGptClient.ChatTurn> History { get; } = new();
 
     /// <summary>
-    /// Последняя сгенерированная картинка — её правит <see cref="ChatGptClient.ContinueImageAsync"/>.
+    /// Последняя сгенерированная картинка: подмешивается в следующий запрос,
+    /// чтобы модель могла её править («сделай его рыжим»).
     /// </summary>
     public ChatGptClient.GeneratedImage? LastImage { get; internal set; }
-
-    /// <summary>
-    /// Референсы последней генерации — для правок с исходными изображениями.
-    /// </summary>
-    public IReadOnlyList<ChatGptClient.InputFile> LastReferences { get; internal set; } = [];
 
     /// <summary>
     /// Есть ли в сессии картинка, которую можно править.
@@ -34,7 +30,6 @@ public class ChatGptSession
     {
         History.Clear();
         LastImage = null;
-        LastReferences = [];
     }
 
     /// <summary>

@@ -19,7 +19,7 @@ internal class Program
     private static bool _channelNamesRestored;
 
     /// <summary>
-    /// Модули команд, управляющих ИИ-функциями. Регистрируются только при UseAi = true.
+    /// Модули команд отключённой ИИ-части: код оставлен, но в Discord не регистрируется.
     /// </summary>
     private static readonly Type[] AiCommandModules = [typeof(SetCommands), typeof(ToggleCommands)];
 
@@ -65,26 +65,13 @@ internal class Program
             ChatGptSessionStore.Load();
         }
 
-        // Инициализация обработчиков
-        if (AppConfig.UseAi)
-        {
-            MessageHandler.Initialize();
-        }
-        else
-        {
-            BotLogger.Information("ИИ отключён (UseAi: false): ИИ-обработчики и команды /set, /toggle не активны");
-        }
-
         // Регистрация модулей команд
         await _interactions.AddModulesAsync(typeof(Program).Assembly, services: null);
 
-        // При выключенном ИИ связанные команды не попадают в Discord
-        if (!AppConfig.UseAi)
+        // ИИ-часть на OpenRouter отключена целиком — её команды в Discord не регистрируются
+        foreach (var module in AiCommandModules)
         {
-            foreach (var module in AiCommandModules)
-            {
-                await _interactions.RemoveModuleAsync(module);
-            }
+            await _interactions.RemoveModuleAsync(module);
         }
 
         // Аналогично для ChatGPT-части
@@ -134,7 +121,8 @@ internal class Program
     /// <summary>
     /// Принудительно переустанавливает слеш-команды: сносит все глобальные и серверные,
     /// включая устаревшие, которых уже нет в коде, и регистрирует текущий набор модулей.
-    /// Набор учитывает UseAi — снятые при запуске ИИ-команды обратно не вернутся.
+    /// Набор учитывает снятые при запуске модули (ИИ-часть, ChatGPT при UseChatGpt: false) —
+    /// обратно они не вернутся.
     /// </summary>
     internal static async Task<(int RemovedGlobal, int RemovedGuild, int Registered)> ReinstallCommandsAsync(SocketGuild? guild)
     {
