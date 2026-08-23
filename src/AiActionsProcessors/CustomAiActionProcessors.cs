@@ -1,3 +1,4 @@
+using Discord;
 using Discord.WebSocket;
 
 using MewoDiscord.Helpers;
@@ -9,7 +10,11 @@ namespace MewoDiscord.AiActionsProcessors;
 /// Text — текст запроса без упоминания бота, с упоминаниями в виде @имя:
 /// именно он подставляется в ACTION_PROMPT действия.
 /// </summary>
-public record CustomAiActionContext(SocketUserMessage Message, string Text, CustomAiAction Action);
+public record CustomAiActionContext(
+    SocketUserMessage Message,
+    string Text,
+    CustomAiAction Action,
+    IMessage? Quoted = null);
 
 /// <summary>
 /// Реестр процессоров кастомных действий: ключ — имя файла действия без расширения
@@ -21,6 +26,7 @@ public static class CustomAiActionProcessors
     private static readonly Dictionary<string, Func<CustomAiActionContext, Task>> Processors =
         new(StringComparer.OrdinalIgnoreCase)
         {
+            ["convert_media"] = ConvertMedia.RunAsync,
             ["edit_profile_picture"] = EditProfilePicture.RunAsync
         };
 

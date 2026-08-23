@@ -95,7 +95,7 @@ public static partial class ChatGptSessionHandler
             }
         }
 
-        if (await CustomAiActionHandler.TryHandleAsync(message, botId))
+        if (await CustomAiActionHandler.TryHandleAsync(message, botId, quoted))
         {
             return true;
         }

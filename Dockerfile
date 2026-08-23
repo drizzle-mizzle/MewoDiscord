@@ -13,6 +13,12 @@ RUN dotnet publish MewoDiscord.csproj -c Release -o /app --no-restore
 FROM mcr.microsoft.com/dotnet/runtime:10.0
 WORKDIR /app
 
+# ffmpeg — для действия convert_media (обрезка, кроп, смена формата).
+# Занимает место на диске, но не память: процесс поднимается на секунды под задачу
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=build /app ./
 
 ENTRYPOINT ["dotnet", "MewoDiscord.dll"]

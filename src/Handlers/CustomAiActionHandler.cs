@@ -1,3 +1,4 @@
+using Discord;
 using Discord.WebSocket;
 
 using MewoDiscord.AiActionsProcessors;
@@ -24,13 +25,13 @@ public static class CustomAiActionHandler
     /// Пытается распознать и запустить кастомное действие.
     /// true — действие сработало и запущено в фоне, сообщение потреблено.
     /// </summary>
-    public static async Task<bool> TryHandleAsync(SocketUserMessage message, ulong botId)
+    public static async Task<bool> TryHandleAsync(SocketUserMessage message, ulong botId, IMessage? quoted = null)
     {
         var candidates = new List<CustomAiAction>();
 
         foreach (var gate in Enum.GetValues<CustomAiActionGate>())
         {
-            if (PassesGate(gate, message, botId))
+            if (PassesGate(gate, message, botId, quoted))
             {
                 candidates.AddRange(CustomAiActionStore.ByGate(gate));
             }
@@ -69,7 +70,7 @@ public static class CustomAiActionHandler
             }
 
             BotLogger.LogAi(BotLogger.ChatGptThreadKey, "🎯 Сработало действие «{Name}» от {User}", action.Name, message.Author.Username);
-            Start(processor, new CustomAiActionContext(message, text, action));
+            Start(processor, new CustomAiActionContext(message, text, action, quoted));
 
             return true;
         }
@@ -81,14 +82,37 @@ public static class CustomAiActionHandler
     /// Проверяет системное условие действия. Гейт должен быть дешёвым: он отсекает
     /// сообщения до похода в ИИ, поэтому никаких сетевых вызовов здесь.
     /// </summary>
-    internal static bool PassesGate(CustomAiActionGate gate, SocketUserMessage message, ulong botId) => gate switch
+    internal static bool PassesGate(CustomAiActionGate gate, SocketUserMessage message, ulong botId, IMessage? quoted = null) => gate switch
     {
         // Только упоминания из текста сообщения: реплай с включённым «@» подставляет
         // в MentionedUsers автора цитаты, и гейт срабатывал бы там, где никого не звали.
         // Упоминание самого бота не в счёт — это обращение, а не цель действия
         CustomAiActionGate.HasUserMention => DiscordMentions.ExplicitUserIds(message.Content).Any(id => id != botId),
+
+        // Работать можно и над своим файлом, и над тем, на который отвечают
+        CustomAiActionGate.HasVideoAttached => HasPlayableMedia(message) || (quoted != null && HasPlayableMedia(quoted)),
         _ => false
     };
+
+    /// <summary>
+    /// Есть ли в сообщении то, что имеет смысл отдавать ffmpeg: видео или анимация.
+    /// Гифка приезжает и вложением, и ссылкой — во втором случае живёт в embed'е.
+    /// Проверка чисто по метаданным: гейт работает до похода в ИИ и качать ничего не должен.
+    /// </summary>
+    internal static bool HasPlayableMedia(IMessage message)
+    {
+        foreach (var attachment in message.Attachments)
+        {
+            if (attachment.ContentType?.StartsWith("video/", StringComparison.OrdinalIgnoreCase) == true
+                || attachment.ContentType?.Equals("image/gif", StringComparison.OrdinalIgnoreCase) == true
+                || attachment.Filename.EndsWith(".gif", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return message.Embeds.Any(embed => embed.Type is EmbedType.Gifv or EmbedType.Video);
+    }
 
     /// <summary>
     /// Ответ инстант-модели на HIT_PROMPT считается попаданием, только если начинается

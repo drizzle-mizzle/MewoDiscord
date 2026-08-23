@@ -26,7 +26,8 @@
   - `Handlers/` — обработчики событий gateway
   - `Helpers/` — конфиг, логгер, тексты сообщений
   - `AiActionsProcessors/` — процессоры кастомных действий (модуль CustomAiActions)
-  - `Utils/` — клиенты внешних сервисов: ChatGPT (`ChatGptClient` + `ChatGptSession`),
+  - `Utils/` — клиенты внешних сервисов и инструментов: ChatGPT (`ChatGptClient` +
+    `ChatGptSession`), ffmpeg (`FfmpegRunner`),
     Telegram (`TelegramPostClient`) и отключённый ИИ (`AiClient` → `OpenRouterClient`)
   - БД сессий ChatGPT — `Helpers/ChatGptSessionStore` (файлы в `state/`), роутинг хитов —
     `Handlers/ChatGptSessionHandler`
@@ -149,7 +150,9 @@ ChatGPT-часть (только при `UseChatGpt: true`):
 - Кастомные действия (модуль CustomAiActions) — типизированные сценарии поверх
   лингвистического интерфейса: пинг бота может означать не «поговорить», а «сделай».
   Ловля двухступенчатая. Сначала системный гейт (`CustomAiActionGate`, пока один —
-  `HAS_USER_MENTION`): проверяется кодом, без сети, и отсекает почти всё. Считаются только
+  `HAS_USER_MENTION` и `HAS_VIDEO_ATTACHED`): проверяется кодом, без сети, и отсекает
+  почти всё. `HAS_VIDEO_ATTACHED` смотрит и на само сообщение, и на цитируемое, по одним
+  метаданным — качать в гейте нельзя. Считаются только
   упоминания **из текста** сообщения (`DiscordMentions.ExplicitUserIds`) — реплай
   с включённым «@» подставляет в `MentionedUsers` автора цитаты, и гейт срабатывал бы там,
   где никого не звали. Затем `HIT_PROMPT`
@@ -163,7 +166,17 @@ ChatGPT-часть (только при `UseChatGpt: true`):
   действие без процессора пропускается с предупреждением. В `{{message}}` подставляется
   текст без упоминания бота и с упоминаниями в виде `@имя` (`DiscordMentions.Humanize`):
   сырой `<@1234567890>` модели ни о чём не говорит.
-  Единственное действие сейчас — `edit_profile_picture` (`AiActionsProcessors/EditProfilePicture`):
+  Действий сейчас два. `convert_media` (`AiActionsProcessors/ConvertMedia`) — механические
+  операции над видео и гифками: формат, обрезка по времени, кроп, размер, частота кадров.
+  Генерации там нет вовсе; модель работает переводчиком — превращает фразу в типизированный
+  план (`FfmpegRunner.MediaPlan`, JSON), а аргументы командной строки собирает код из белого
+  списка. **Модель не пишет аргументы ffmpeg никогда** — иначе это выполнение произвольных
+  команд из вывода ИИ. Все числа плана зажимаются в потолки (`MaxOutputSeconds`, `MaxWidth`,
+  `MaxFps`, `MaxInputBytes`), кроп подрезается под границы кадра, задачи идут по одной
+  под семафором, процесс убивается по таймауту: сервер маленький. Гифка собирается через
+  `palettegen`/`paletteuse` — без палитры цвета грязные. Размеры исходника узнаём у ffprobe
+  и сообщаем модели: без них она не посчитает кроп.
+  Второе действие — `edit_profile_picture` (`AiActionsProcessors/EditProfilePicture`):
   скачивает аватарку упомянутого пользователя, шлёт карточку с ней, отдельным дешёвым
   запросом превращает свободную фразу в инструкцию художнику, создаёт штатную сессию
   ChatGPT, закреплённую за карточкой, и делает в неё хит с картинкой. Дальше правки
@@ -221,8 +234,9 @@ docker compose run --rm cliproxy --codex-device-login
 (БД имён каналов, временный каталог), `Telegram_*` (разбор виджета и поиск ссылок на фикстурах HTML),
 `Watcher_*` (матрица решений переименования каналов), `Gpt_*` (клиент ChatGPT: сборка запросов
 и разбор ответов; БД сессий во временном каталоге), `Messages_*` (разбор `messages.ini`)
-`Action_*` (разбор файлов действий, распознавание «ДА») и `Mentions_*`
-(перевод упоминаний в имена и обратно). Классы, переставляющие общий
+`Action_*` (разбор файлов действий, распознавание «ДА»), `Mentions_*`
+(перевод упоминаний в имена и обратно) и `Media_*` (сборка аргументов ffmpeg и разбор
+плана от модели; сам ffmpeg не запускается). Классы, переставляющие общий
 `AppConfig.StateDirectory`, объединены в xUnit-коллекцию "state-directory" — иначе
 параллельный прогон классов гоняется за одним статиком.
 Тесты `АИ_*` ходят в сеть: `АИ_Гпт*` — в поднятый CLIProxyAPI (нужны `UseChatGpt: true`
@@ -231,7 +245,7 @@ docker compose run --rm cliproxy --codex-device-login
 `Files/ai_prompts.legacy.ini` вместе с `OpenRouterApiKey`.
 Прогон без обращений к ИИ:
 ```bash
-dotnet test --filter "FullyQualifiedName~Regex_|FullyQualifiedName~Store_|FullyQualifiedName~Telegram_|FullyQualifiedName~Watcher_|FullyQualifiedName~Gpt_|FullyQualifiedName~Messages_|FullyQualifiedName~Action_|FullyQualifiedName~Mentions_"
+dotnet test --filter "FullyQualifiedName~Regex_|FullyQualifiedName~Store_|FullyQualifiedName~Telegram_|FullyQualifiedName~Watcher_|FullyQualifiedName~Gpt_|FullyQualifiedName~Messages_|FullyQualifiedName~Action_|FullyQualifiedName~Mentions_|FullyQualifiedName~Media_"
 ```
 
 ## Конфигурация
@@ -247,6 +261,9 @@ dotnet test --filter "FullyQualifiedName~Regex_|FullyQualifiedName~Store_|FullyQ
   адрес и ключ прокси (ключ совпадает с одним из `api-keys` в `cliproxy/config.yaml`),
   `ChatGptManagementKey` — пароль management API (совпадает с `MANAGEMENT_PASSWORD`
   в `cliproxy/management.env`); все читаются на лету
+- `FfmpegPath` и `FfprobePath` в `[COMMON]` — пути к ffmpeg (по умолчанию из PATH,
+  в docker-образе он ставится пакетом). Без ffmpeg действие `convert_media` отвечает ошибкой,
+  остальной бот работает
 - Секция `[CHATGPT_SETTINGS]` — `ChatModel`, `InstantModel`, `MaxTokens`, `SystemPrompt`;
   всё перечитывается на лету. Параметров изображений нет: их выбирает модель сама.
   `InstantModel` — дешёвая модель служебных запросов кастомных действий; не задана —

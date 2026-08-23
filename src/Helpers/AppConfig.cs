@@ -16,6 +16,14 @@ public static class AppConfig
     public static string LocalTimeZone => Get("COMMON", nameof(LocalTimeZone), "Europe/Kiev");
 
     /// <summary>
+    /// Путь к ffmpeg и ffprobe для операций над медиа. По умолчанию — из PATH:
+    /// в docker-образе они ставятся пакетом, локально нужны на машине разработчика.
+    /// </summary>
+    public static string FfmpegPath => Get("COMMON", nameof(FfmpegPath), "ffmpeg");
+
+    public static string FfprobePath => Get("COMMON", nameof(FfprobePath), "ffprobe");
+
+    /// <summary>
     /// Включена ли ChatGPT-часть (чат с генерацией изображений через CLIProxyAPI).
     /// В отличие от остальных настроек фиксируется при запуске: от флага зависит
     /// создание лог-треда и набор команд, горячая перезагрузка его не подхватывает.

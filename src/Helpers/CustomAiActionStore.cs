@@ -9,7 +9,13 @@ public enum CustomAiActionGate
     /// <summary>
     /// В сообщении есть прямое упоминание живого пользователя (кроме самого бота).
     /// </summary>
-    HasUserMention
+    HasUserMention,
+
+    /// <summary>
+    /// К сообщению или к цитируемому им сообщению приложено видео или гифка —
+    /// в том числе вставленная ссылкой, то есть живущая в embed'е.
+    /// </summary>
+    HasVideoAttached
 }
 
 /// <summary>

@@ -137,6 +137,24 @@ public static class BotMessages
     public static string AiActionAvatarFailed(string user) =>
         Format(nameof(AiActionAvatarFailed), ("{user}", user));
 
+    public static string MediaTooBig(string size) =>
+        Format(nameof(MediaTooBig), ("{size}", size));
+
+    public static string MediaResultTooBig(string size) =>
+        Format(nameof(MediaResultTooBig), ("{size}", size));
+
+    public static string MediaNotReadable() =>
+        Format(nameof(MediaNotReadable));
+
+    public static string MediaFormatNotSupported(string format) =>
+        Format(nameof(MediaFormatNotSupported), ("{format}", format));
+
+    public static string MediaPlanUnclear() =>
+        Format(nameof(MediaPlanUnclear));
+
+    public static string MediaFailed() =>
+        Format(nameof(MediaFailed));
+
     #region Internals
 
     private static readonly string MessagesPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Files", "messages.ini");

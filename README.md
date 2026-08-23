@@ -24,7 +24,9 @@ Discord bot for a small friend server. Built with .NET 10.0 and [Discord.NET](ht
   action that hits takes over. Actions are flat ini files in `Files/custom_ai_actions/`, one per file,
   each paired with a processor. The one shipped today edits a mentioned user's avatar: it downloads the
   picture, opens a regular ChatGPT session around it and asks for the edit, so follow-up tweaks are
-  ordinary replies
+  ordinary replies. A second action does mechanical media work — trimming, cropping,
+  resizing and format changes — where the model only translates the phrasing into a typed plan and
+  ffmpeg does the work under hard limits
 
 The former OpenRouter AI features (joke chat and the profanity censor) are dormant: the code is still
 there, but its entry points, settings and commands are disabled pending a rewrite on top of the proxy
