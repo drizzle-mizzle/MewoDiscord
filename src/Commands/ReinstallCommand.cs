@@ -20,10 +20,11 @@ public class ReinstallCommand : InteractionModuleBase<SocketInteractionContext>
             Context.User.Username, removedGlobal, removedGuild, registered);
 
         await FollowupAsync(
-            BotMessages.ReinstallDone(
-                removedGlobal.ToString(),
-                removedGuild.ToString(),
-                registered.ToString()),
+            embed: BotEmbeds.Success(
+                BotMessages.ReinstallDone(
+                    removedGlobal.ToString(),
+                    removedGuild.ToString(),
+                    registered.ToString())),
             ephemeral: true);
     }
 }

@@ -29,7 +29,7 @@ public class ChatGptCommands : InteractionModuleBase<SocketInteractionContext>
 
         if (start == null)
         {
-            await FollowupAsync(BotMessages.ChatGptLoginStartFailed(), ephemeral: true);
+            await FollowupAsync(embed: BotEmbeds.Error(BotMessages.ChatGptLoginStartFailed()), ephemeral: true);
             return;
         }
 
@@ -38,7 +38,7 @@ public class ChatGptCommands : InteractionModuleBase<SocketInteractionContext>
             .Build();
 
         await FollowupAsync(
-            BotMessages.ChatGptLoginInstructions(start.Url),
+            embed: BotEmbeds.Info(BotMessages.ChatGptLoginInstructions(start.Url)),
             components: components,
             ephemeral: true);
     }
@@ -54,27 +54,36 @@ public class ChatGptCommands : InteractionModuleBase<SocketInteractionContext>
 
         if (accounts == null)
         {
-            await FollowupAsync(BotMessages.ChatGptLoginStartFailed(), ephemeral: true);
+            await FollowupAsync(embed: BotEmbeds.Error(BotMessages.ChatGptLoginStartFailed()), ephemeral: true);
             return;
         }
 
         if (accounts.Count == 0)
         {
-            await FollowupAsync(BotMessages.ChatGptStatusEmpty(), ephemeral: true);
+            await FollowupAsync(embed: BotEmbeds.Warning(BotMessages.ChatGptStatusEmpty()), ephemeral: true);
             return;
         }
 
         var lines = new List<string> { BotMessages.ChatGptStatusHeader(accounts.Count.ToString()) };
+        var healthy = true;
 
         foreach (var account in accounts)
         {
+            var broken = account.Disabled || account.Unavailable;
+            healthy &= !broken;
+
             var email = string.IsNullOrEmpty(account.Email) ? string.Empty : $" — {account.Email}";
-            var marker = account.Disabled || account.Unavailable ? $" {BotMessages.ChatGptStatusUnavailable()}" : string.Empty;
+            var marker = broken ? $" {BotMessages.ChatGptStatusUnavailable()}" : string.Empty;
             var note = string.IsNullOrEmpty(account.StatusMessage) ? string.Empty : $" ({account.StatusMessage})";
             lines.Add($"• `{account.Name}`{email}{marker}{note}");
         }
 
-        await FollowupAsync(string.Join("\n", lines), ephemeral: true);
+        // Хотя бы один недоступный аккаунт — жёлтая карточка вместо зелёной
+        var text = string.Join("\n", lines);
+
+        await FollowupAsync(
+            embed: healthy ? BotEmbeds.Success(text) : BotEmbeds.Warning(text),
+            ephemeral: true);
     }
 
     // ignoreGroupNames обязателен: [Group] префиксует пути компонент-обработчиков,
@@ -93,7 +102,9 @@ public class ChatGptCommands : InteractionModuleBase<SocketInteractionContext>
         BotLogger.LogCommand("/chatgpt login (вставка ссылки) — {User}: {Result}", Context.User.Username, result.Ok ? "успех" : result.Error ?? "ошибка");
 
         await FollowupAsync(
-            result.Ok ? BotMessages.ChatGptLoginDone() : BotMessages.ChatGptLoginFailed(result.Error ?? "неизвестная ошибка"),
+            embed: result.Ok
+                ? BotEmbeds.Success(BotMessages.ChatGptLoginDone())
+                : BotEmbeds.Error(BotMessages.ChatGptLoginFailed(result.Error ?? "неизвестная ошибка")),
             ephemeral: true);
     }
 }

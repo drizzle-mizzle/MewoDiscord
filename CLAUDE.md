@@ -166,8 +166,8 @@ docker compose run --rm cliproxy --codex-device-login
 
 `src/MewoDiscord.Tests` — xUnit. Автономны, сеть не нужна: `Regex_*` (фильтр мата), `Store_*`
 (БД имён каналов, временный каталог), `Telegram_*` (разбор виджета и поиск ссылок на фикстурах HTML),
-`Watcher_*` (матрица решений переименования каналов) и `Gpt_*` (клиент ChatGPT: сборка запросов
-и разбор ответов; БД сессий во временном каталоге). Классы, переставляющие общий
+`Watcher_*` (матрица решений переименования каналов), `Gpt_*` (клиент ChatGPT: сборка запросов
+и разбор ответов; БД сессий во временном каталоге) и `Messages_*` (разбор `messages.ini`). Классы, переставляющие общий
 `AppConfig.StateDirectory`, объединены в xUnit-коллекцию "state-directory" — иначе
 параллельный прогон классов гоняется за одним статиком.
 Тесты `АИ_*` ходят в сеть: `АИ_Гпт*` — в поднятый CLIProxyAPI (нужны `UseChatGpt: true`
@@ -176,7 +176,7 @@ docker compose run --rm cliproxy --codex-device-login
 `Files/ai_prompts.legacy.ini` вместе с `OpenRouterApiKey`.
 Прогон без обращений к ИИ:
 ```bash
-dotnet test --filter "FullyQualifiedName~Regex_|FullyQualifiedName~Store_|FullyQualifiedName~Telegram_|FullyQualifiedName~Watcher_|FullyQualifiedName~Gpt_"
+dotnet test --filter "FullyQualifiedName~Regex_|FullyQualifiedName~Store_|FullyQualifiedName~Telegram_|FullyQualifiedName~Watcher_|FullyQualifiedName~Gpt_|FullyQualifiedName~Messages_"
 ```
 
 ## Конфигурация
@@ -195,7 +195,10 @@ dotnet test --filter "FullyQualifiedName~Regex_|FullyQualifiedName~Store_|FullyQ
 - Секция `[CHATGPT_SETTINGS]` — `ChatModel`, `MaxTokens`, `SystemPrompt`; всё перечитывается
   на лету. Параметров изображений нет: их выбирает модель сама
 - Новый конфиг: свойство в AppConfig + строка в `config.ini` и `config.example.ini`
-- Новое сообщение: метод в BotMessages + строка в `messages.ini`
+- Новое сообщение: метод в BotMessages + строка в `messages.ini`. Формат тот же, что у конфига:
+  строка без `Ключ:` продолжает предыдущее сообщение, так пишутся многострочные инструкции.
+  Ключом считается только латинский идентификатор — иначе продолжение вроде
+  «Используй: yyyy-MM-dd» приняли бы за новый ключ
 
 ## Конвенции
 
@@ -216,6 +219,14 @@ dotnet test --filter "FullyQualifiedName~Regex_|FullyQualifiedName~Store_|FullyQ
 - Все тексты, видимые пользователям — через BotMessages (не хардкод). Осознанные исключения —
   `AloneChannelName` (константа в `ChannelRenameWatcher`) и тексты модалок/кнопок в атрибутах
   Interaction Framework (`[InputLabel]`, `[ModalTextInput]` требуют compile-time констант)
+- Системные сообщения — ответы команд, уведомления, ошибки — уходят embed'ами через `BotEmbeds`
+  (`Success`/`Error`/`Warning`/`Info`, цвета из палитры Discord). Текст по-прежнему берётся
+  из BotMessages, `BotEmbeds` только оборачивает. Заголовка у таких embed'ов нет: тексты
+  самодостаточны и начинаются с эмодзи, а смысл несёт цвет полосы.
+  Обычным текстом остаются журнал голосовых каналов (событий слишком много, чтобы каждое
+  было карточкой) и ответы самой модели ChatGPT (не влезают в лимит описания 4096, а код-блоки
+  и вложения в embed'е выглядят хуже) — системные пометки к ним едут отдельным embed'ом
+  на том же сообщении
 - Обработчики `[ComponentInteraction]`/`[ModalInteraction]` внутри модуля с `[Group]` —
   обязательно с `ignoreGroupNames: true`: иначе группа префиксует путь, и с дефолтным
   `InteractionServiceConfig` custom id никогда не совпадёт (кнопка молча не работает)

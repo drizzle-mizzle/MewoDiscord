@@ -125,7 +125,7 @@ public static partial class ChatGptSessionHandler
 
             if (text.Length == 0 && files.Count == 0)
             {
-                await ReplyAsync(message, BotMessages.ChatGptEmptyPrompt());
+                await ReplyAsync(message, BotEmbeds.Warning(BotMessages.ChatGptEmptyPrompt()));
                 return;
             }
 
@@ -153,14 +153,14 @@ public static partial class ChatGptSessionHandler
 
         if (reply.Text.Length == 0 && reply.Images.Count == 0)
         {
-            await ReplyAsync(message, BotMessages.ChatGptRequestFailed());
+            await ReplyAsync(message, BotEmbeds.Error(BotMessages.ChatGptRequestFailed()));
             return;
         }
 
-        // Картинки крупнее лимита сервера не грузятся — вместо них пометка в тексте
+        // Картинки крупнее лимита сервера не грузятся — вместо них уведомление
         var uploadLimit = ((message.Channel as SocketGuildChannel)?.Guild)?.MaxUploadLimit ?? FallbackUploadLimit;
         var images = new List<ChatGptClient.GeneratedImage>();
-        var replyText = reply.Text;
+        var oversized = new List<string>();
 
         foreach (var image in reply.Images)
         {
@@ -170,11 +170,25 @@ public static partial class ChatGptSessionHandler
             }
             else
             {
-                replyText = $"{replyText}\n{BotMessages.ChatGptImageTooBig(FormatSize(image.Content.Length))}".Trim();
+                oversized.Add(BotMessages.ChatGptImageTooBig(FormatSize(image.Content.Length)));
             }
         }
 
-        var chunks = replyText.Length > 0 ? BotLogger.SplitMessage(replyText) : [];
+        // Уведомление едет отдельным embed'ом на последнем сообщении ответа: текст модели
+        // остаётся обычным сообщением, системная пометка не смешивается с ним
+        var notice = oversized.Count > 0 ? BotEmbeds.Warning(string.Join('\n', oversized)) : null;
+        var chunks = reply.Text.Length > 0 ? BotLogger.SplitMessage(reply.Text) : [];
+
+        // Ответ целиком не поместился: остаётся только уведомление
+        if (chunks.Count == 0 && images.Count == 0)
+        {
+            if (notice != null)
+            {
+                await ReplyAsync(message, notice);
+            }
+
+            return;
+        }
 
         // Текст без картинок: последний чанк уходит обычным сообщением,
         // с картинками — они прикрепляются к последнему сообщению
@@ -201,6 +215,7 @@ public static partial class ChatGptSessionHandler
             {
                 last = await message.Channel.SendFilesAsync(
                     attachments,
+                    embed: notice,
                     allowedMentions: AllowedMentions.None,
                     messageReference: first ? BuildReference(message) : null);
             }
@@ -212,10 +227,11 @@ public static partial class ChatGptSessionHandler
                 }
             }
         }
-        else if (chunks.Count > 0)
+        else
         {
             last = await message.Channel.SendMessageAsync(
                 chunks[^1],
+                embed: notice,
                 allowedMentions: AllowedMentions.None,
                 messageReference: first ? BuildReference(message) : null);
         }
@@ -280,12 +296,12 @@ public static partial class ChatGptSessionHandler
         }
     }
 
-    private static async Task<IUserMessage?> ReplyAsync(SocketUserMessage message, string text)
+    private static async Task<IUserMessage?> ReplyAsync(SocketUserMessage message, Embed embed)
     {
         try
         {
             return await message.Channel.SendMessageAsync(
-                text,
+                embed: embed,
                 allowedMentions: AllowedMentions.None,
                 messageReference: new MessageReference(message.Id, failIfNotExists: false));
         }

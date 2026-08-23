@@ -18,7 +18,7 @@ public class PurgeCommand : InteractionModuleBase<SocketInteractionContext>
     {
         if (Context.Channel is not ITextChannel textChannel)
         {
-            await RespondAsync(BotMessages.PurgeNotTextChannel(), ephemeral: true);
+            await RespondAsync(embed: BotEmbeds.Error(BotMessages.PurgeNotTextChannel()), ephemeral: true);
             return;
         }
 
@@ -43,13 +43,16 @@ public class PurgeCommand : InteractionModuleBase<SocketInteractionContext>
 
         var reply = BotMessages.PurgeDone(deletable.Count.ToString());
 
+        // Часть сообщений могла оказаться старше 14 дней — тогда исход неполный, цвет жёлтый
         if (tooOld > 0)
         {
             reply += "\n" + BotMessages.PurgeTooOld(tooOld.ToString());
         }
 
+        var embed = tooOld > 0 ? BotEmbeds.Warning(reply) : BotEmbeds.Success(reply);
+
         BotLogger.LogCommand("/purge by-count — {User} удалил {Count} сообщений в #{Channel}", Context.User.Username, deletable.Count, textChannel.Name);
-        await FollowupAsync(reply, ephemeral: true);
+        await FollowupAsync(embed: embed, ephemeral: true);
     }
 
     [SlashCommand("by-time", "Удалить сообщения за указанный период")]
@@ -63,7 +66,7 @@ public class PurgeCommand : InteractionModuleBase<SocketInteractionContext>
     {
         if (Context.Channel is not ITextChannel textChannel)
         {
-            await RespondAsync(BotMessages.PurgeNotTextChannel(), ephemeral: true);
+            await RespondAsync(embed: BotEmbeds.Error(BotMessages.PurgeNotTextChannel()), ephemeral: true);
             return;
         }
 
@@ -71,7 +74,7 @@ public class PurgeCommand : InteractionModuleBase<SocketInteractionContext>
 
         if (!DateTime.TryParseExact(from, "yyyy-MM-dd HH:mm", null, System.Globalization.DateTimeStyles.None, out var fromLocal))
         {
-            await RespondAsync(BotMessages.PurgeBadDateFormat(), ephemeral: true);
+            await RespondAsync(embed: BotEmbeds.Error(BotMessages.PurgeBadDateFormat()), ephemeral: true);
             return;
         }
 
@@ -82,7 +85,7 @@ public class PurgeCommand : InteractionModuleBase<SocketInteractionContext>
         {
             if (!DateTime.TryParseExact(to, "yyyy-MM-dd HH:mm", null, System.Globalization.DateTimeStyles.None, out var toLocal))
             {
-                await RespondAsync(BotMessages.PurgeBadDateFormat(), ephemeral: true);
+                await RespondAsync(embed: BotEmbeds.Error(BotMessages.PurgeBadDateFormat()), ephemeral: true);
                 return;
             }
 
@@ -142,12 +145,15 @@ public class PurgeCommand : InteractionModuleBase<SocketInteractionContext>
 
         var reply = BotMessages.PurgeDone(deletable.Count.ToString());
 
+        // Часть сообщений могла оказаться старше 14 дней — тогда исход неполный, цвет жёлтый
         if (tooOld > 0)
         {
             reply += "\n" + BotMessages.PurgeTooOld(tooOld.ToString());
         }
 
+        var embed = tooOld > 0 ? BotEmbeds.Warning(reply) : BotEmbeds.Success(reply);
+
         BotLogger.LogCommand("/purge by-time — {User} удалил {Count} сообщений в #{Channel}", Context.User.Username, deletable.Count, textChannel.Name);
-        await FollowupAsync(reply, ephemeral: true);
+        await FollowupAsync(embed: embed, ephemeral: true);
     }
 }

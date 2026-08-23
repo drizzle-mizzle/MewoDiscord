@@ -50,6 +50,9 @@ public static class BotMessages
     public static string ReinstallDone(string global, string guild, string registered) =>
         Format(nameof(ReinstallDone), ("{global}", global), ("{guild}", guild), ("{registered}", registered));
 
+    public static string SayDone() =>
+        Format(nameof(SayDone));
+
     public static string PurgeDone(string count) =>
         Format(nameof(PurgeDone), ("{count}", count));
 
@@ -154,32 +157,89 @@ public static class BotMessages
                 return;
             }
 
-            var dict = new Dictionary<string, string>();
-            foreach (var line in File.ReadAllLines(MessagesPath))
-            {
-                var trimmed = line.Trim();
-
-                if (string.IsNullOrWhiteSpace(trimmed) || trimmed.StartsWith('#'))
-                {
-                    continue;
-                }
-
-                var colonIndex = trimmed.IndexOf(':');
-
-                if (colonIndex <= 0)
-                {
-                    continue;
-                }
-
-                dict[trimmed[..colonIndex].Trim()] = trimmed[(colonIndex + 1)..].Trim();
-            }
-
-            _templates = dict;
+            _templates = Parse(File.ReadAllLines(MessagesPath));
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Ошибка при загрузке messages.ini: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Разбирает messages.ini: «Ключ: текст», комментарии через #, а строка без ключа
+    /// продолжает предыдущее сообщение (так пишутся многострочные инструкции).
+    /// </summary>
+    internal static Dictionary<string, string> Parse(IEnumerable<string> source)
+    {
+        var dict = new Dictionary<string, string>();
+        string? currentKey = null;
+        var lines = new List<string>();
+
+        foreach (var line in source)
+        {
+            var trimmed = line.Trim();
+
+            if (string.IsNullOrWhiteSpace(trimmed) || trimmed.StartsWith('#'))
+            {
+                continue;
+            }
+
+            var colonIndex = trimmed.IndexOf(':');
+
+            if (colonIndex > 0 && IsKey(trimmed[..colonIndex]))
+            {
+                FlushValue(dict, currentKey, lines);
+                currentKey = trimmed[..colonIndex];
+                var value = trimmed[(colonIndex + 1)..].Trim();
+
+                if (value.Length > 0)
+                {
+                    lines.Add(value);
+                }
+            }
+            else if (currentKey != null)
+            {
+                // Строка без ключа продолжает предыдущее значение — так пишутся
+                // многострочные тексты (инструкции в несколько шагов)
+                lines.Add(trimmed);
+            }
+        }
+
+        FlushValue(dict, currentKey, lines);
+
+        return dict;
+    }
+
+    /// <summary>
+    /// Ключом считается только латинский идентификатор: иначе продолжение вроде
+    /// «Используй: yyyy-MM-dd» приняли бы за начало нового сообщения.
+    /// </summary>
+    private static bool IsKey(string candidate)
+    {
+        if (candidate.Length == 0 || !char.IsAsciiLetter(candidate[0]))
+        {
+            return false;
+        }
+
+        foreach (var c in candidate)
+        {
+            if (!char.IsAsciiLetterOrDigit(c) && c != '_')
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static void FlushValue(Dictionary<string, string> dict, string? key, List<string> lines)
+    {
+        if (key != null && lines.Count > 0)
+        {
+            dict[key] = string.Join('\n', lines);
+        }
+
+        lines.Clear();
     }
 
     private static string Format(string key, params (string placeholder, string value)[] replacements)

@@ -14,6 +14,6 @@ public class SayCommand : InteractionModuleBase<SocketInteractionContext>
     {
         await Context.Channel.SendMessageAsync(text);
         BotLogger.LogCommand("{User} использовал /say в #{Channel}", Context.User.Username, Context.Channel.Name);
-        await RespondAsync("✅", ephemeral: true);
+        await RespondAsync(embed: BotEmbeds.Success(BotMessages.SayDone()), ephemeral: true);
     }
 }

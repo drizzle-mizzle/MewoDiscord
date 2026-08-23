@@ -24,7 +24,7 @@ public class SetCommands : InteractionModuleBase<SocketInteractionContext>
         BotLogger.LogCommand("/set temperature {Temperature} — выполнил {User}", valueStr, Context.User.Username);
 
         await RespondAsync(
-            BotMessages.SetTemperature(valueStr),
+            embed: BotEmbeds.Success(BotMessages.SetTemperature(valueStr)),
             ephemeral: true);
     }
 }
