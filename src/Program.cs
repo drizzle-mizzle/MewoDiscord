@@ -5,6 +5,7 @@ using Discord.WebSocket;
 using MewoDiscord.Commands;
 using MewoDiscord.Handlers;
 using MewoDiscord.Helpers;
+using MewoDiscord.Utils;
 
 using Serilog;
 using Serilog.Events;
@@ -65,6 +66,20 @@ internal class Program
         {
             ChatGptSessionStore.Load();
             CustomAiActionStore.Load();
+
+            // YouTube ломает yt-dlp примерно раз в месяц, и на вопрос «почему перестало
+            // работать» в журнале должен быть ответ. Не отвечает — не беда: остальной
+            // бот работает, а действие download_video скажет об этом само
+            var ytDlpVersion = await YtDlpRunner.VersionAsync();
+
+            if (ytDlpVersion != null)
+            {
+                Log.Information("yt-dlp версии {Version}", ytDlpVersion);
+            }
+            else
+            {
+                Log.Warning("yt-dlp не найден — скачивание видео с YouTube работать не будет");
+            }
         }
 
         // Регистрация модулей команд

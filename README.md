@@ -27,6 +27,15 @@ Discord bot for a small friend server. Built with .NET 10.0 and [Discord.NET](ht
   ordinary replies. A second action does mechanical media work — trimming, cropping,
   resizing and format changes — where the model only translates the phrasing into a typed plan and
   ffmpeg does the work under hard limits
+- **YouTube downloads** — `@bot скачай <link>` fetches the video with yt-dlp and posts it as an
+  attachment, together with a short note on the container, resolution and both tracks. A bare link is
+  ignored: the gate needs an actual request next to it. Quality is chosen before anything is downloaded,
+  by estimating each resolution against the server's upload limit — the best one that fits wins, and a
+  reduced pick is noted in the reply. A video that could not reach the limit at watchable quality is
+  refused up front rather than after twenty minutes of work. Trims are downloaded as a range, so
+  "обрежь с 1:04 по 1:40" costs megabytes rather than the whole file, and the same action also converts
+  formats, extracts the audio track and makes gifs. Everything runs one job at a time in a scratch
+  volume that is swept clean afterwards
 
 The former OpenRouter AI features (joke chat and the profanity censor) are dormant: the code is still
 there, but its entry points, settings and commands are disabled pending a rewrite on top of the proxy
@@ -83,14 +92,16 @@ messages were skipped for that reason.
 
 ```bash
 cd src
-dotnet test --filter "FullyQualifiedName~Regex_|FullyQualifiedName~Store_|FullyQualifiedName~Telegram_|FullyQualifiedName~Watcher_|FullyQualifiedName~Gpt_"
+dotnet test --filter "FullyQualifiedName~Regex_|FullyQualifiedName~Store_|FullyQualifiedName~Telegram_|FullyQualifiedName~Watcher_|FullyQualifiedName~Gpt_|FullyQualifiedName~Messages_|FullyQualifiedName~Action_|FullyQualifiedName~Mentions_|FullyQualifiedName~Media_"
 ```
 
 The `Regex_*` (profanity filter), `Store_*` (channel-name database), `Telegram_*` (widget parsing and
-link detection), `Watcher_*` (channel rename decisions) and `Gpt_*` (ChatGPT client and session database)
-tests are self-contained and need no network. The `АИ_Гпт*` tests talk to a running CLIProxyAPI; the
-remaining `АИ_*` ones target the dormant OpenRouter code and only work if its sections are restored
-to `config.ini`.
+link detection), `Watcher_*` (channel rename decisions), `Gpt_*` (ChatGPT client and session database),
+`Messages_*` (message file parsing), `Action_*` (custom action files), `Mentions_*` (mention translation)
+and `Media_*` (ffmpeg arguments, yt-dlp format selection, compression math and YouTube link recognition)
+tests are self-contained and need no network — neither ffmpeg nor yt-dlp is ever launched. The `АИ_Гпт*`
+tests talk to a running CLIProxyAPI; the remaining `АИ_*` ones target the dormant OpenRouter code and
+only work if its sections are restored to `config.ini`.
 
 ## Docker
 
@@ -99,6 +110,30 @@ Logs live in the `bot-logs` volume and runtime state (channel names, ChatGPT ses
 so both survive `docker compose up --build`. A `cliproxy` sidecar (CLIProxyAPI) runs next to the bot and
 serves the ChatGPT part; its config comes from `cliproxy/config.yaml`, the management password from
 `cliproxy/management.env`, and Codex OAuth tokens live in the `cliproxy-auth` volume.
+
+ffmpeg comes from apt; yt-dlp is pulled into the build stage as the static release binary and copied
+across, so the runtime image needs neither python nor curl. Its version is pinned by `YTDLP_VERSION`
+in the `Dockerfile` — YouTube breaks yt-dlp roughly monthly and upstream fixes land within days, so when
+the bot starts replying "похоже, пора обновить yt-dlp", bump that line and rebuild.
+
+### The media volume
+
+Downloads and their re-encoded artifacts go to the `mewo-media` volume mounted at `/media`. Everything
+in it is temporary: one job runs at a time, and the workspace is deleted when the job ends — plus swept
+on the way in, so a crash mid-download cannot leave garbage behind.
+
+**A plain local Docker volume cannot be size-capped.** It is just a directory on the host and will
+happily eat the whole disk, so the 4 GB ceiling is enforced by the bot instead: `BudgetMb`, the download
+watchdog, and a free-space check that keeps a 512 MB reserve. For a kernel-enforced limit, back the
+volume with a loop-mounted image and point `driver_opts` at it:
+
+```bash
+fallocate -l 4G /srv/mewo-media.img && mkfs.ext4 /srv/mewo-media.img
+```
+
+If YouTube starts asking the bot to confirm it is not a robot — likely on a datacenter IP — set
+`YtDlpExtraArgs` to rotate the player client, or supply a Netscape cookie jar via `YoutubeCookiesFile`.
+Use a throwaway Google account for that, and mount the file read-write: yt-dlp rewrites it on exit.
 
 ```bash
 docker compose up -d --build

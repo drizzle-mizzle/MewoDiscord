@@ -9,6 +9,9 @@ services:
       - ./src/Files/config.ini:/app/Files/config.ini:ro
       - bot-logs:/app/logs
       - bot-state:/app/state
+      # Рабочий том yt-dlp и ffmpeg: исходник плюс артефакты пережатия.
+      # Всё, что сюда попало, удаляется по завершении операции
+      - mewo-media:/media
 
   # OpenAI-совместимый прокси к подписке ChatGPT Plus (Codex OAuth).
   # Логин — командой /chatgpt-auth login в Discord; запасной путь:
@@ -31,3 +34,8 @@ volumes:
   bot-logs:
   bot-state:
   cliproxy-auth:
+  # Обычному локальному тому размер задать нельзя — это просто каталог на хосте,
+  # и он съест диск целиком. Потолок в 4 ГБ держит сам бот: бюджет рабочего каталога
+  # (BudgetMb), сторож качания и проверка свободного места с резервом.
+  # Кому нужен предел уровня ядра — см. README, раздел про рабочий том
+  mewo-media:
