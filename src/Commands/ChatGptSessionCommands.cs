@@ -63,8 +63,16 @@ public class ChatGptSessionCommands : InteractionModuleBase<SocketInteractionCon
         {
             var entry = all[i];
             var link = $"https://discord.com/channels/{entry.GuildId}/{entry.ChannelId}/{entry.LastMessageId}";
+
+            // <t:unix:R> — «минуту назад» силами самого клиента, в его часовом поясе
             var unix = new DateTimeOffset(DateTime.SpecifyKind(entry.UpdatedAtUtc, DateTimeKind.Utc)).ToUnixTimeSeconds();
-            lines.Add($"{i + 1}. [перейти]({link}) — <t:{unix}:R>");
+
+            lines.Add(BotMessages.ChatGptSessionsLine(
+                (i + 1).ToString(),
+                MentionUtils.MentionChannel(entry.ChannelId),
+                entry.Runtime.TotalTurns.ToString(),
+                $"<t:{unix}:R>",
+                link));
         }
 
         var embed = new EmbedBuilder()

@@ -107,6 +107,15 @@ public static class BotMessages
     public static string ChatGptSessionsTitle() =>
         Format(nameof(ChatGptSessionsTitle));
 
+    public static string ChatGptSessionsLine(string index, string channel, string count, string updated, string link) =>
+        Format(
+            nameof(ChatGptSessionsLine),
+            ("{index}", index),
+            ("{channel}", channel),
+            ("{count}", count),
+            ("{updated}", updated),
+            ("{link}", link));
+
     public static string ChatGptRequestFailed() =>
         Format(nameof(ChatGptRequestFailed));
 

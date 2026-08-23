@@ -24,12 +24,20 @@ public class ChatGptSession
     public bool HasImage => LastImage != null;
 
     /// <summary>
+    /// Сколько всего сообщений прошло через сессию (вопросы и ответы вместе).
+    /// Считается отдельно от History: та обрезается до
+    /// <see cref="ChatGptClient.MaxHistoryTurns"/> и о прошлом уже не помнит.
+    /// </summary>
+    public int TotalTurns { get; internal set; }
+
+    /// <summary>
     /// Полный сброс сессии: история, картинка и референсы.
     /// </summary>
     public void Reset()
     {
         History.Clear();
         LastImage = null;
+        TotalTurns = 0;
     }
 
     /// <summary>
@@ -38,6 +46,7 @@ public class ChatGptSession
     internal void Append(ChatGptClient.ChatTurn turn)
     {
         History.Add(turn);
+        TotalTurns++;
 
         while (History.Count > ChatGptClient.MaxHistoryTurns)
         {

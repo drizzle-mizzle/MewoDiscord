@@ -62,6 +62,28 @@ public class ChatGptSessionStoreTests : IDisposable
     }
 
     [Fact]
+    public void Gpt_СчётчикСообщенийПереживаетОбрезкуИсторииИРестарт()
+    {
+        var entry = ChatGptSessionStore.Create(1, 2, 100);
+        var total = ChatGptClient.MaxHistoryTurns + 5;
+
+        for (var i = 0; i < total; i++)
+        {
+            entry.Runtime.Append(new ChatGptClient.ChatTurn("user", $"сообщение {i}", []));
+        }
+
+        ChatGptSessionStore.Rebind(entry, 200);
+        ChatGptSessionStore.Load();
+
+        var restored = ChatGptSessionStore.FindByMessageId(200);
+        Assert.NotNull(restored);
+
+        // История обрезана лимитом, а счётчик помнит и вытесненные сообщения
+        Assert.Equal(ChatGptClient.MaxHistoryTurns, restored.Runtime.History.Count);
+        Assert.Equal(total, restored.Runtime.TotalTurns);
+    }
+
+    [Fact]
     public void Gpt_ПривязкаПереезжаетПриRebind()
     {
         var entry = ChatGptSessionStore.Create(1, 2, 100);

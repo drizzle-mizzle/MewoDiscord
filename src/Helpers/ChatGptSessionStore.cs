@@ -270,6 +270,7 @@ public static class ChatGptSessionStore
 
             var dto = new SessionFileDto
             {
+                TotalTurns = entry.Runtime.TotalTurns,
                 Turns = entry.Runtime.History
                     .Select(t => new TurnDto { Role = t.Role, Text = t.Text, Images = t.ImageDataUrls.ToList() })
                     .ToList(),
@@ -324,6 +325,10 @@ public static class ChatGptSessionStore
                 }
             }
 
+            // Append посчитал восстановленные ходы, но история обрезана — счётчик из файла
+            // помнит и вытесненные. У сессий, сохранённых до появления поля, его нет
+            entry.Runtime.TotalTurns = Math.Max(dto.TotalTurns, entry.Runtime.TotalTurns);
+
             if (dto.LastImage?.Content != null && dto.LastImage.Mime != null)
             {
                 entry.Runtime.LastImage = new ChatGptClient.GeneratedImage(dto.LastImage.Content, dto.LastImage.Mime, dto.LastImage.RevisedPrompt);
@@ -354,6 +359,8 @@ public static class ChatGptSessionStore
 
     private class SessionFileDto
     {
+        public int TotalTurns { get; init; }
+
         public List<TurnDto>? Turns { get; init; }
 
         public ImageDto? LastImage { get; init; }
