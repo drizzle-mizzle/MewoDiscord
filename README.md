@@ -62,7 +62,7 @@ which are open to everyone.
 | `/purge by-count` | Delete the last N messages (1–100), optionally only from one user |
 | `/purge by-time` | Delete messages in a `yyyy-MM-dd HH:mm` range, optionally only from one user |
 | `/say` | Post a message as the bot |
-| `/reinstall` | Wipe every registered slash command, including stale ones, and register the current set |
+| `/reinstall` | Wipe every registered slash command, including stale ones, and register the current set on this guild |
 | `/chatgpt new` | Start a ChatGPT session pinned to the bot's reply (anyone can use it) |
 | `/chatgpt sessions` | List sessions with jump links to their latest messages (anyone can use it) |
 | `/chatgpt-auth login` | Sign in to the ChatGPT account through the proxy's OAuth flow |

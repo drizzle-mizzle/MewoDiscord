@@ -1,4 +1,4 @@
-using Discord;
+﻿using Discord;
 using Discord.Interactions;
 using Discord.WebSocket;
 
@@ -17,6 +17,7 @@ internal class Program
     private static DiscordSocketClient? _client;
     private static InteractionService? _interactions;
     private static bool _channelNamesRestored;
+    private static bool _commandsRegistered;
 
     /// <summary>
     /// Модули команд отключённой ИИ-части: код оставлен, но в Discord не регистрируется.
@@ -120,38 +121,44 @@ internal class Program
 
     /// <summary>
     /// Принудительно переустанавливает слеш-команды: сносит все глобальные и серверные,
-    /// включая устаревшие, которых уже нет в коде, и регистрирует текущий набор модулей.
-    /// Набор учитывает снятые при запуске модули (ИИ-часть, ChatGPT при UseChatGpt: false) —
-    /// обратно они не вернутся.
+    /// включая устаревшие, которых уже нет в коде, и регистрирует текущий набор модулей
+    /// на сервере, откуда вызвана команда. Набор учитывает снятые при запуске модули
+    /// (ИИ-часть, ChatGPT при UseChatGpt: false) — обратно они не вернутся.
     /// </summary>
     internal static async Task<(int RemovedGlobal, int RemovedGuild, int Registered)> ReinstallCommandsAsync(SocketGuild? guild)
     {
+        // Глобальных команд бот больше не заводит, но могли остаться от прошлых версий:
+        // рядом с серверными они дублировались бы в списке у клиентов
         var existingGlobal = await _client!.Rest.GetGlobalApplicationCommands();
-        await _client.Rest.DeleteAllGlobalCommandsAsync();
 
-        var removedGuild = 0;
-
-        // Серверные команды живут отдельно от глобальных: их bulk-регистрация не трогает
-        if (guild != null)
+        if (existingGlobal.Count > 0)
         {
-            var guildCommands = await guild.GetApplicationCommandsAsync();
-            removedGuild = guildCommands.Count;
-
-            if (removedGuild > 0)
-            {
-                await guild.DeleteApplicationCommandsAsync();
-            }
+            await _client.Rest.DeleteAllGlobalCommandsAsync();
         }
 
-        var registered = await _interactions!.RegisterCommandsGloballyAsync();
+        if (guild == null)
+        {
+            return (existingGlobal.Count, 0, 0);
+        }
+
+        var removedGuild = (await guild.GetApplicationCommandsAsync()).Count;
+
+        // Регистрация серверных команд — bulk-перезапись: устаревшие исчезают сами
+        var registered = await _interactions!.RegisterCommandsToGuildAsync(guild.Id);
 
         return (existingGlobal.Count, removedGuild, registered.Count);
     }
 
     private static async Task OnReady()
     {
-        await _interactions!.RegisterCommandsGloballyAsync();
-        BotLogger.Information("Слеш-команды зарегистрированы");
+        // Ready повторяется на каждом переподключении gateway, а регистрация команд —
+        // разовая операция с жёстким лимитом Discord: делаем только при первом запуске
+        if (!_commandsRegistered)
+        {
+            _commandsRegistered = true;
+            await RegisterGuildCommandsAsync();
+        }
+
         await BotLogger.InitializeSessionAsync();
 
         // Только при первом Ready: событие повторяется на каждом переподключении gateway.
@@ -160,6 +167,38 @@ internal class Program
         {
             _channelNamesRestored = true;
             ChannelRenameWatcher.RestoreOnStartup(_client!);
+        }
+    }
+
+    /// <summary>
+    /// Регистрирует слеш-команды на каждом сервере, где есть бот. Серверные команды выбраны
+    /// вместо глобальных: они появляются у клиентов сразу, а не расползаются по кэшу Discord
+    /// до часа. Бот живёт на одном небольшом сервере, так что запросов немного.
+    /// </summary>
+    private static async Task RegisterGuildCommandsAsync()
+    {
+        // Глобальные команды могли остаться от прошлых версий бота: рядом с серверными
+        // они дублировались бы в списке у клиентов
+        var staleGlobal = await _client!.Rest.GetGlobalApplicationCommands();
+
+        if (staleGlobal.Count > 0)
+        {
+            await _client.Rest.DeleteAllGlobalCommandsAsync();
+            BotLogger.Information("Удалено глобальных слеш-команд: {Count}", staleGlobal.Count);
+        }
+
+        foreach (var guild in _client.Guilds)
+        {
+            try
+            {
+                // Bulk-перезапись: команды, которых больше нет в коде, исчезают сами
+                await _interactions!.RegisterCommandsToGuildAsync(guild.Id);
+                BotLogger.Information("Слеш-команды зарегистрированы на сервере {Guild}", guild.Name);
+            }
+            catch (Exception ex)
+            {
+                BotLogger.Error(ex, "Не удалось зарегистрировать команды на сервере {Guild}", guild.Name);
+            }
         }
     }
 
