@@ -263,6 +263,18 @@ public static class ChatGptClient
         return ParseAuthFilesResponse(response.Value.Body);
     }
 
+    /// <summary>
+    /// Есть ли у прокси хотя бы один рабочий аккаунт ChatGPT.
+    /// null — проверить не удалось (management API не настроен или прокси не ответил):
+    /// вызывающий решает сам, мешать ему или нет.
+    /// </summary>
+    public static async Task<bool?> HasWorkingAccountAsync()
+    {
+        var accounts = await GetAccountsAsync();
+
+        return accounts?.Any(account => !account.Disabled && !account.Unavailable);
+    }
+
     #region Внутренности
 
     /// <summary>

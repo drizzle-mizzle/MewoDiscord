@@ -119,6 +119,9 @@ public static class BotMessages
     public static string ChatGptGuildOnly() =>
         Format(nameof(ChatGptGuildOnly));
 
+    public static string ChatGptNotAuthorized() =>
+        Format(nameof(ChatGptNotAuthorized));
+
     #region Internals
 
     private static readonly string MessagesPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Files", "messages.ini");

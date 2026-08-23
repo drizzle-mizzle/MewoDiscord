@@ -1,6 +1,7 @@
 using Discord;
 using Discord.Interactions;
 using MewoDiscord.Helpers;
+using MewoDiscord.Utils;
 
 namespace MewoDiscord.Commands;
 
@@ -22,8 +23,20 @@ public class ChatGptSessionCommands : InteractionModuleBase<SocketInteractionCon
             return;
         }
 
-        // Ответ публичный: на него нужно реплаить, ephemeral-сообщения для этого не годятся
-        await RespondAsync(embed: BotEmbeds.Info(BotMessages.ChatGptSessionNew()));
+        // Ответ публичный: на него нужно реплаить, ephemeral-сообщения для этого не годятся.
+        // Defer — потому что проверка авторизации ниже ходит в management API прокси
+        await DeferAsync();
+
+        // Без авторизации сессия бесполезна: любой хит в неё упрётся в ошибку.
+        // null — проверить не удалось (management API не настроен): тогда не мешаем
+        if (await ChatGptClient.HasWorkingAccountAsync() == false)
+        {
+            BotLogger.LogCommand("/chatgpt new — {User}: отказано, ChatGPT не авторизован", Context.User.Username);
+            await ModifyOriginalResponseAsync(m => m.Embed = BotEmbeds.Error(BotMessages.ChatGptNotAuthorized()));
+            return;
+        }
+
+        await ModifyOriginalResponseAsync(m => m.Embed = BotEmbeds.Info(BotMessages.ChatGptSessionNew()));
 
         var original = await GetOriginalResponseAsync();
         var entry = ChatGptSessionStore.Create(Context.Guild.Id, Context.Channel.Id, original.Id);
