@@ -172,9 +172,24 @@ public static class ChatGptClient
         var turn = PrepareUserTurn(text, files, context);
 
         var carry = ResolveCarryImage(session, turn);
-        var json = BuildChatRequestJson(cfg.ChatModel, cfg.MaxTokens, session.History, turn, BuildSystemPrompt(context?.BotName), carry);
+        var effort = NormalizeEffort(cfg.ReasoningEffort);
 
-        BotLogger.LogAi(BotLogger.ChatGptThreadKey, "📤 Чат ({Model}, картинок: {Images}):\n{Text}", cfg.ChatModel, turn.ImageDataUrls.Count, turn.Text);
+        var json = BuildChatRequestJson(
+            cfg.ChatModel,
+            cfg.MaxTokens,
+            session.History,
+            turn,
+            BuildSystemPrompt(context?.BotName),
+            carry,
+            effort);
+
+        BotLogger.LogAi(
+            BotLogger.ChatGptThreadKey,
+            "📤 Чат ({Model}, рассуждения: {Effort}, картинок: {Images}):\n{Text}",
+            cfg.ChatModel,
+            effort ?? "по умолчанию",
+            turn.ImageDataUrls.Count,
+            turn.Text);
 
         var responseBody = await PostJsonAsync(ChatCompletionsPath, json);
 
@@ -810,7 +825,14 @@ public static class ChatGptClient
     /// Непустой systemPrompt уходит первым сообщением с ролью system,
     /// carryImageDataUrl — последняя сгенерированная картинка, приложенная к текущему ходу.
     /// </summary>
-    internal static string BuildChatRequestJson(string model, int maxTokens, IReadOnlyList<ChatTurn> history, ChatTurn userTurn, string? systemPrompt = null, string? carryImageDataUrl = null)
+    internal static string BuildChatRequestJson(
+        string model,
+        int maxTokens,
+        IReadOnlyList<ChatTurn> history,
+        ChatTurn userTurn,
+        string? systemPrompt = null,
+        string? carryImageDataUrl = null,
+        string? reasoningEffort = null)
     {
         var messages = new List<ChatApiMessage>();
 
@@ -834,10 +856,23 @@ public static class ChatGptClient
         {
             Model = model,
             MaxTokens = maxTokens,
+            ReasoningEffort = NormalizeEffort(reasoningEffort),
             Messages = messages
         };
 
         return JsonSerializer.Serialize(request, JsonOptions);
+    }
+
+    /// <summary>
+    /// Приводит уровень рассуждений к тому, что бэкенд точно понимает.
+    /// Всё незнакомое отбрасывается, а не отправляется как есть: неизвестный уровень
+    /// отвергается целиком, и вместо ответа пользователь получил бы ошибку.
+    /// </summary>
+    internal static string? NormalizeEffort(string? effort)
+    {
+        var normalized = effort?.Trim().ToLowerInvariant();
+
+        return normalized is "minimal" or "low" or "medium" or "high" ? normalized : null;
     }
 
     /// <summary>
@@ -961,6 +996,14 @@ public static class ChatGptClient
 
         [JsonPropertyName("max_tokens")]
         public required int MaxTokens { get; init; }
+
+        /// <summary>
+        /// Глубина рассуждений. null — поля в запросе не будет вовсе, и бэкенд
+        /// возьмёт свой уровень по умолчанию.
+        /// </summary>
+        [JsonPropertyName("reasoning_effort")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? ReasoningEffort { get; init; }
 
         [JsonPropertyName("messages")]
         public required List<ChatApiMessage> Messages { get; init; }

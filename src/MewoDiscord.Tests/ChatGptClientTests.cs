@@ -202,6 +202,35 @@ public class ChatGptClientTests
         Assert.Contains("\"max_tokens\":2048", json);
         Assert.Contains("\"content\":\"\\u043F\\u0440\\u0438\\u0432\\u0435\\u0442\"", json);
         Assert.DoesNotContain("image_url", json);
+
+        // Уровень рассуждений не задан — поля в запросе нет, и бэкенд берёт свой
+        // по умолчанию. Так уходят служебные запросы кастомных действий
+        Assert.DoesNotContain("reasoning_effort", json);
+    }
+
+    [Fact]
+    public void Gpt_УровеньРассужденийУходитВЗапрос()
+    {
+        var turn = new ChatGptClient.ChatTurn("user", "привет", []);
+        var json = ChatGptClient.BuildChatRequestJson("gpt-5.5", 2048, [], turn, reasoningEffort: "high");
+
+        Assert.Contains("\"reasoning_effort\":\"high\"", json);
+    }
+
+    [Theory]
+    [InlineData("high", "high")]
+    [InlineData("HIGH", "high")]
+    [InlineData("  medium  ", "medium")]
+    [InlineData("minimal", "minimal")]
+    [InlineData("xhigh", null)]
+    [InlineData("выключено", null)]
+    [InlineData("", null)]
+    [InlineData(null, null)]
+    public void Gpt_НеизвестныйУровеньРассужденийНеОтправляется(string? effort, string? expected)
+    {
+        // Неизвестный уровень бэкенд отвергает целиком, и вместо ответа пользователь
+        // получил бы ошибку — поэтому всё незнакомое просто не отправляем
+        Assert.Equal(expected, ChatGptClient.NormalizeEffort(effort));
     }
 
     [Fact]

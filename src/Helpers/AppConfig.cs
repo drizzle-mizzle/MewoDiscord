@@ -137,6 +137,15 @@ public static class AppConfig
 
         public int MaxTokens => GetInt(SectionName, "MaxTokens", 2048);
 
+        /// <summary>
+        /// Глубина рассуждений модели в обычном чате: minimal, low, medium, high.
+        /// Значение вне списка означает «не передавать поле вовсе» — это и выключатель,
+        /// и защита от опечатки: неизвестный уровень бэкенд отвергает целиком,
+        /// и запрос падает. Служебные запросы кастомных действий уровень не получают:
+        /// там ответ «ДА» или «НЕТ», и думать над ним нечего.
+        /// </summary>
+        public string ReasoningEffort => Get(SectionName, nameof(ReasoningEffort), "high");
+
         public string SystemPrompt => Get(SectionName, "SystemPrompt");
     }
 
