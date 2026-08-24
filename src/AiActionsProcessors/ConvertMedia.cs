@@ -31,6 +31,20 @@ public static class ConvertMedia
     private const long MaxModelImageBytes = 8 * 1024 * 1024;
 
     /// <summary>
+    /// Сторона, до которой ужимается картинка перед отправкой модели. Фото с телефона
+    /// бывает и на четыре тысячи пикселей, а рисует модель около тысячи по стороне —
+    /// разница уходит в ожидание и ни во что больше.
+    /// </summary>
+    private const int MaxModelImageSide = 1536;
+
+    /// <summary>
+    /// До какой длительности файл считается неподвижной картинкой. Ноль тут не годится:
+    /// ffprobe отдаёт для одиночного кадра длительность в одну сороковую секунды,
+    /// и проверка «строго ноль» отбраковывала обычный jpg с телефона.
+    /// </summary>
+    private const double MaxStillSeconds = 1;
+
+    /// <summary>
     /// Список полей плана для файла, который видно: кроп здесь осмыслен, потому что
     /// размеры исходника известны и сообщаются модели.
     /// </summary>
@@ -175,7 +189,7 @@ public static class ConvertMedia
         // сделать можно, просто не ffmpeg'ом
         if (plan == null || plan.IsEmpty)
         {
-            var image = await ReadForModelAsync(inputPath, info);
+            var image = await PrepareForModelAsync(workspace, inputPath, source.FileName, info);
 
             // Слот больше не нужен, а поход в модель занимает минуту: отпускаем заранее,
             // чтобы чужая обрезка не ждала чужой перерисовки. Dispose идемпотентен,
@@ -184,7 +198,9 @@ public static class ConvertMedia
 
             if (image == null)
             {
-                await ReplyAsync(message, BotEmbeds.Warning(BotMessages.MediaPlanUnclear()));
+                // Механической операции не вышло, творческой тоже: значит это видео
+                // или гифка, а покадрово их не перерисовать
+                await ReplyAsync(message, BotEmbeds.Warning(BotMessages.MediaModelNeedsStill()));
                 return;
             }
 
@@ -235,20 +251,69 @@ public static class ConvertMedia
     }
 
     /// <summary>
-    /// Читает файл для отправки модели. null — работа ей не по силам или не по размеру:
-    /// покадровая правка видео и гифки моделью не делается (об этом сказано отдельно),
-    /// а десятки мегабайт в запрос тащить незачем.
+    /// Неподвижная ли это картинка — то есть можно ли отдать её модели на перерисовку.
+    /// Сравнение с нулём тут не работает: ffprobe отдаёт для одиночного кадра
+    /// длительность в одну сороковую секунды, и строгая проверка отбраковывала
+    /// обычное фото с телефона.
     /// </summary>
-    private static async Task<byte[]?> ReadForModelAsync(string path, FfmpegRunner.MediaInfo info)
+    internal static bool IsStillImage(FfmpegRunner.MediaInfo info) =>
+        info.Video != null && info.DurationSeconds < MaxStillSeconds;
+
+    /// <summary>
+    /// Готовит кадр для модели. Тяжёлое или крупное ужимается тем же ffmpeg, а не
+    /// отбраковывается: отказ из-за размера пользователь читает как «бот не умеет»,
+    /// хотя уметь тут нечего — достаточно уменьшить. Формат сохраняется исходный,
+    /// чтобы не терять прозрачность у png.
+    /// null — только для того, что моделью действительно не правится.
+    /// </summary>
+    private static async Task<byte[]?> PrepareForModelAsync(
+        MediaWorkspace workspace,
+        string inputPath,
+        string fileName,
+        FfmpegRunner.MediaInfo info)
     {
-        if (info.Video == null || info.DurationSeconds > 0)
+        if (!IsStillImage(info))
         {
+            BotLogger.Information(
+                "Творческая правка не для этого файла: длительность {Duration} с, видеодорожка {HasVideo}",
+                info.DurationSeconds,
+                info.Video != null);
+
             return null;
         }
 
-        var size = new FileInfo(path).Length;
+        var size = new FileInfo(inputPath).Length;
 
-        return size > MaxModelImageBytes ? null : await File.ReadAllBytesAsync(path);
+        if (size <= MaxModelImageBytes && info.Width <= MaxModelImageSide && info.Height <= MaxModelImageSide)
+        {
+            return await File.ReadAllBytesAsync(inputPath);
+        }
+
+        var prepared = await FfmpegRunner.RunAsync(
+            workspace,
+            inputPath,
+            fileName,
+            new FfmpegRunner.MediaPlan(Width: MaxModelImageSide),
+            info,
+            new FfmpegRunner.MediaLimits(MaxStillSeconds, MaxModelImageSide, 0));
+
+        if (prepared.FilePath == null)
+        {
+            BotLogger.Warning("Не удалось ужать картинку для модели: {Error}", prepared.Error ?? "?");
+            return null;
+        }
+
+        var reduced = new FileInfo(prepared.FilePath).Length;
+
+        if (reduced > MaxModelImageBytes)
+        {
+            BotLogger.Warning("Картинка осталась на {Size} байт даже после уменьшения", reduced);
+            return null;
+        }
+
+        BotLogger.Information("Картинка для модели ужата: {Before} → {After} байт", size, reduced);
+
+        return await File.ReadAllBytesAsync(prepared.FilePath);
     }
 
     /// <summary>

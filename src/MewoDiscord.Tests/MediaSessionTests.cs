@@ -1,3 +1,4 @@
+using MewoDiscord.AiActionsProcessors;
 using MewoDiscord.Helpers;
 using MewoDiscord.Utils;
 
@@ -69,6 +70,44 @@ public class MediaSessionTests
         Assert.Equal(session.SourceMessageId, restored.SourceMessageId);
         Assert.Equal(session.Plan, restored.Plan);
         Assert.Equal(session.UpdatedAt, restored.UpdatedAt);
+    }
+
+    [Fact]
+    public void Media_ФотоСТелефонаСчитаетсяНеподвижнойКартинкой()
+    {
+        // ffprobe отдаёт для одиночного кадра длительность в одну сороковую секунды,
+        // а не ноль. Проверка «строго ноль» отбраковывала обычный jpg, и творческая
+        // правка вместо работы отвечала «не понял, что сделать»
+        var photo = FfmpegRunner.ParseProbe("""
+            {"streams":[{"codec_type":"video","codec_name":"mjpeg","width":3072,"height":4096,
+                         "avg_frame_rate":"25/1"}],
+             "format":{"duration":"0.040000","format_name":"image2","size":"7800000"}}
+            """);
+
+        Assert.NotNull(photo);
+        Assert.True(ConvertMedia.IsStillImage(photo));
+    }
+
+    [Fact]
+    public void Media_ВидеоИГифкаМоделиНеОтдаются()
+    {
+        // Покадровая перерисовка модели не по силам — про это она честно отказывает
+        var clip = new FfmpegRunner.MediaInfo(
+            640,
+            360,
+            12,
+            Video: new FfmpegRunner.VideoStreamInfo("h264", 640, 360, 30, 800_000));
+
+        Assert.False(ConvertMedia.IsStillImage(clip));
+
+        // Звук без картинки перерисовывать тем более нечем
+        var audio = new FfmpegRunner.MediaInfo(
+            0,
+            0,
+            120,
+            Audio: new FfmpegRunner.AudioStreamInfo("aac", 2, 44100, 128_000));
+
+        Assert.False(ConvertMedia.IsStillImage(audio));
     }
 
     [Fact]

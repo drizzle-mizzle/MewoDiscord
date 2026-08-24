@@ -176,6 +176,9 @@ public static class BotMessages
     public static string MediaSourceGone() =>
         Format(nameof(MediaSourceGone));
 
+    public static string MediaModelNeedsStill() =>
+        Format(nameof(MediaModelNeedsStill));
+
     public static string YoutubeDownloading(string quality) =>
         Format(nameof(YoutubeDownloading), ("{quality}", quality));
 
