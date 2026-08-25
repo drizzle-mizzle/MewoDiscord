@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -216,11 +217,11 @@ public static partial class PostMediaHandler
     {
         var lines = new List<string>();
 
-        if (!string.IsNullOrWhiteSpace(post.AuthorName))
+        var label = BuildLinkLabel(post.AuthorName);
+
+        if (label != null)
         {
-            // Квадратная скобка в имени оборвала бы подпись markdown-ссылки
-            var name = MarkdownLinkCharsRegex().Replace(post.AuthorName, string.Empty);
-            lines.Add($"### [{name}]({postUrl})");
+            lines.Add($"### [{label}]({postUrl})");
         }
 
         if (post.Caption != null)
@@ -302,6 +303,69 @@ public static partial class PostMediaHandler
     }
 
     /// <summary>
+    /// Готовит имя автора к подписи скрытой ссылки. Эмодзи из подписи вычёркиваются:
+    /// с ними Discord ссылку не отрисовывает вовсе — показывает сырую разметку
+    /// со скобками и адресом. Квадратная скобка оборвала бы подпись по той же причине.
+    /// Когда от имени остаётся только логин в скобках, скобки снимаются: они были при имени,
+    /// а имени больше нет. Вложенные скобки при этом не трогаем — «(Аня) (@anya)»
+    /// развернулось бы в мусор.
+    /// Не осталось ничего (имя было из одних эмодзи, а логина нет) — ссылки не будет:
+    /// подпись из пустоты Discord тоже покажет сырой разметкой.
+    /// </summary>
+    internal static string? BuildLinkLabel(string? authorName)
+    {
+        if (string.IsNullOrWhiteSpace(authorName))
+        {
+            return null;
+        }
+
+        var label = RemoveEmoji(authorName);
+        label = MarkdownLinkCharsRegex().Replace(label, string.Empty);
+        label = ExtraSpacesRegex().Replace(label, " ").Trim();
+
+        if (label.StartsWith('(') && label.EndsWith(')') && label.IndexOf(')') == label.Length - 1)
+        {
+            label = label[1..^1].Trim();
+        }
+
+        return label.Length > 0 ? label : null;
+    }
+
+    /// <summary>
+    /// Вычёркивает эмодзи. Считаем по кодовым точкам, а не регуляркой: почти все эмодзи
+    /// лежат за пределами основной плоскости, а .NET сопоставляет регулярку по половинкам
+    /// суррогатной пары, и категория «значок» у них не совпадает ни с чем.
+    /// </summary>
+    private static string RemoveEmoji(string text)
+    {
+        var result = new StringBuilder(text.Length);
+
+        foreach (var rune in text.EnumerateRunes())
+        {
+            if (!IsEmoji(rune))
+            {
+                result.Append(rune);
+            }
+        }
+
+        return result.ToString();
+    }
+
+    /// <summary>
+    /// Эмодзи — это сам значок (в том числе половинка флага: 🇬🇷 состоит из двух),
+    /// рамка клавиши, а также склейка: селектор начертания FE0F, нулевой соединитель 200D
+    /// и тон кожи. Тон кожи ловится диапазоном, а не категорией: в ней же лежат «^» и «`».
+    /// </summary>
+    private static bool IsEmoji(Rune rune)
+    {
+        var category = Rune.GetUnicodeCategory(rune);
+
+        return category is UnicodeCategory.OtherSymbol or UnicodeCategory.EnclosingMark ||
+               rune.Value is 0x200D or 0xFE0F ||
+               rune.Value is >= 0x1F3FB and <= 0x1F3FF;
+    }
+
+    /// <summary>
     /// Готовит текст поста к вставке: обрезает по лимиту компонента.
     /// </summary>
     internal static string PrepareCaption(string text)
@@ -358,4 +422,7 @@ public static partial class PostMediaHandler
 
     [GeneratedRegex(@"[\[\]]")]
     private static partial Regex MarkdownLinkCharsRegex();
+
+    [GeneratedRegex(@"\s{2,}")]
+    private static partial Regex ExtraSpacesRegex();
 }

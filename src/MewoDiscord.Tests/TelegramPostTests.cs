@@ -188,6 +188,31 @@ public class TelegramPostTests
         Assert.True(caption.Length < 4000, $"длина {caption.Length} не влезает в лимит компонента");
     }
 
+    /// <summary>
+    /// Подпись ссылки общая для всех источников, но случай пришёл из X: у автора с эмодзи
+    /// в имени Discord показывал сырую разметку вместо ссылки.
+    /// </summary>
+    [Theory]
+    [InlineData("Khyle. (@khyleri)", "Khyle. (@khyleri)")]
+    [InlineData("🐝🇬🇷 (@bee_fumo)", "@bee_fumo")]
+    [InlineData("Anna 🌸 Smith (@anna)", "Anna Smith (@anna)")]
+    [InlineData("Тест 👨‍👩‍👧 (@test)", "Тест (@test)")]
+    [InlineData("[NASA] (@NASA)", "NASA (@NASA)")]
+    [InlineData("(Аня) (@anya)", "(Аня) (@anya)")]
+    public void Telegram_ПодписьСсылкиБезЭмодзи(string author, string expected)
+    {
+        Assert.Equal(expected, PostMediaHandler.BuildLinkLabel(author));
+    }
+
+    [Theory]
+    [InlineData("🐝🇬🇷")]
+    [InlineData("   ")]
+    [InlineData(null)]
+    public void Telegram_ПодписьБезБуквНеСсылка(string? author)
+    {
+        Assert.Null(PostMediaHandler.BuildLinkLabel(author));
+    }
+
     [Theory]
     [InlineData("https://cdn4.telesco.pe/file/clip.mp4", true, "clip.mp4")]
     [InlineData("https://cdn4.telesco.pe/file/picture.jpg", false, "picture.jpg")]
