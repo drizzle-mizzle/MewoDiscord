@@ -9,13 +9,22 @@ namespace MewoDiscord.Utils;
 /// Чтение постов X через syndication-ручку «cdn.syndication.twimg.com/tweet-result» — ту самую,
 /// которой X рисует встроенные твиты на чужих сайтах. Ключей и авторизации не требует и отдаёт
 /// JSON: автора, текст и все медиа поста, а для видео — лесенку mp4-вариантов.
-/// Приватные, удалённые и защищённые посты она не отдаёт (404) — тогда бот молчит,
+/// Удалённые и защищённые посты она не отдаёт (404), а закрытые для анонима — например,
+/// у аккаунтов с пометкой «чувствительные медиа» — отдаёт «надгробием» вместо поста.
+/// На такой отказ идём вторым путём, в читалку FxTwitter; не вышло и там — бот молчит,
 /// и в чате остаётся обычное превью Discord.
 /// </summary>
 public static class XPostClient
 {
     private const string SyndicationUrlFormat =
         "https://cdn.syndication.twimg.com/tweet-result?id={0}&token={1}&lang=en";
+
+    /// <summary>
+    /// Запасная читалка. Ключей тоже не требует, а посты, закрытые для анонима, отдаёт:
+    /// syndication — витрина для встроенных твитов, и такое она показывать не станет
+    /// никогда, сколько ни подбирай токен.
+    /// </summary>
+    private const string FxApiUrlFormat = "https://api.fxtwitter.com/status/{0}";
 
     private const string PostUrlFormat = "https://x.com/{0}/status/{1}";
 
@@ -42,6 +51,20 @@ public static class XPostClient
     /// </summary>
     public static async Task<SocialPost?> TryGetPostAsync(string statusId, ulong maxBytes)
     {
+        var ladder = await TryGetLadderAsync(statusId);
+
+        return ladder == null ? null : await PickQualityAsync(ladder, maxBytes);
+    }
+
+    /// <summary>
+    /// Достаёт пост: сперва штатной ручкой, а не вышло — читалкой. Причина отказа роли
+    /// не играет, поэтому и не разбирается: «надгробие» приезжает обычным ответом 200,
+    /// то есть неотличимо от мусора уже на разборе, а сеть и 404 ловятся тем же catch.
+    /// Каждый отказ пишется в лог: молчание бота без единой строчки со стороны неотличимо
+    /// от «не увидел ссылку», и причину искали бы в регулярке, а не в X.
+    /// </summary>
+    private static async Task<LadderPost?> TryGetLadderAsync(string statusId)
+    {
         var url = string.Format(SyndicationUrlFormat, statusId, BuildToken(statusId));
 
         try
@@ -49,11 +72,43 @@ public static class XPostClient
             var json = await SocialMediaHttp.Http.GetStringAsync(url);
             var post = ParsePost(json);
 
-            return post == null ? null : await PickQualityAsync(post, maxBytes);
+            if (post != null)
+            {
+                return post;
+            }
+
+            BotLogger.Warning("Syndication не отдала пост X {Id} — идём в читалку", statusId);
         }
         catch (Exception ex)
         {
-            BotLogger.Warning("Не удалось получить пост X {Id}: {Message}", statusId, ex.Message);
+            BotLogger.Warning(
+                "Не удалось получить пост X {Id}: {Message} — идём в читалку", statusId, ex.Message);
+        }
+
+        return await TryGetFxPostAsync(statusId);
+    }
+
+    /// <summary>
+    /// Второй заход — к читалке. Логин в пути ей не нужен, и это кстати: у нас он бывает
+    /// служебным (i/web), то есть ведёт в никуда.
+    /// </summary>
+    private static async Task<LadderPost?> TryGetFxPostAsync(string statusId)
+    {
+        try
+        {
+            var json = await SocialMediaHttp.Http.GetStringAsync(string.Format(FxApiUrlFormat, statusId));
+            var post = ParseFxPost(json);
+
+            if (post == null)
+            {
+                BotLogger.Warning("Читалка не отдала пост X {Id}", statusId);
+            }
+
+            return post;
+        }
+        catch (Exception ex)
+        {
+            BotLogger.Warning("Не удалось получить пост X {Id} через читалку: {Message}", statusId, ex.Message);
             return null;
         }
     }
@@ -123,7 +178,7 @@ public static class XPostClient
                 return null;
             }
 
-            return new LadderPost(ReadAuthor(root), caption, media);
+            return new LadderPost(ReadAuthor(root, "user"), caption, media);
         }
         catch (JsonException ex)
         {
@@ -199,15 +254,114 @@ public static class XPostClient
             return null;
         }
 
-        // Кроме mp4 в лесенке лежит плейлист m3u8: собирать из него файл нечем и незачем
-        var ladder = variants.EnumerateArray()
+        var ladder = ReadMp4Ladder(variants);
+
+        return ladder.Count == 0 ? null : new MediaLadder(IsVideo: true, poster, ladder);
+    }
+
+    /// <summary>
+    /// Разбирает ответ читалки. Форма своя: пост лежит в «tweet», медиа — плоским списком
+    /// «media.all», а текст приезжает уже развёрнутым и без ссылки на само медиа.
+    /// Внутренний метод — на нём держатся тесты разбора.
+    /// </summary>
+    internal static LadderPost? ParseFxPost(string json)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+
+            if (root.ValueKind != JsonValueKind.Object ||
+                !root.TryGetProperty("tweet", out var tweet) ||
+                tweet.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+
+            var media = new List<MediaLadder>();
+
+            if (tweet.TryGetProperty("media", out var mediaRoot) &&
+                mediaRoot.TryGetProperty("all", out var all) && all.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in all.EnumerateArray())
+                {
+                    var ladder = ReadFxMedia(item);
+
+                    if (ladder != null)
+                    {
+                        media.Add(ladder);
+                    }
+                }
+            }
+
+            var text = ReadText(tweet, "text")?.Trim();
+            var caption = string.IsNullOrEmpty(text) ? null : text;
+
+            if (media.Count == 0 && caption == null)
+            {
+                return null;
+            }
+
+            return new LadderPost(ReadAuthor(tweet, "author"), caption, media);
+        }
+        catch (JsonException ex)
+        {
+            BotLogger.Warning("Не удалось разобрать ответ читалки: {Message}", ex.Message);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Разбирает одну запись «media.all». У фото в url лежит сам файл, у видео и гифки —
+    /// лучший вариант, а лесенка целиком рядом. Гифка и здесь тот же mp4, просто своим типом.
+    /// </summary>
+    private static MediaLadder? ReadFxMedia(JsonElement item)
+    {
+        var type = ReadText(item, "type");
+        var url = ReadText(item, "url");
+
+        if (type == "photo")
+        {
+            return url == null ? null : new MediaLadder(IsVideo: false, ThumbnailUrl: null, [url]);
+        }
+
+        if (type != "video" && type != "gif")
+        {
+            return null;
+        }
+
+        var ladder = item.TryGetProperty("variants", out var variants)
+            ? ReadMp4Ladder(variants)
+            : [];
+
+        // Лесенки может и не быть — тогда остаётся тот единственный файл, который читалка
+        // сама сочла лучшим: это хуже выбора по размеру, но лучше молчания
+        if (ladder.Count == 0 && url != null)
+        {
+            ladder.Add(url);
+        }
+
+        return ladder.Count == 0 ? null : new MediaLadder(IsVideo: true, ReadText(item, "thumbnail_url"), ladder);
+    }
+
+    /// <summary>
+    /// Собирает лесенку mp4 от лучшего к худшему. Форма вариантов у обоих источников одна:
+    /// url, bitrate и content_type. Кроме mp4 в лесенке лежит плейлист m3u8 — собирать
+    /// из него файл нечем и незачем.
+    /// </summary>
+    private static List<string> ReadMp4Ladder(JsonElement variants)
+    {
+        if (variants.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        return variants.EnumerateArray()
             .Where(variant => ReadText(variant, "content_type") == "video/mp4")
             .OrderByDescending(variant => ReadNumber(variant, "bitrate"))
             .Select(variant => ReadText(variant, "url"))
             .OfType<string>()
             .ToList();
-
-        return ladder.Count == 0 ? null : new MediaLadder(IsVideo: true, poster, ladder);
     }
 
     /// <summary>
@@ -259,10 +413,11 @@ public static class XPostClient
 
     /// <summary>
     /// Автор в виде «Имя (@логин)»: одного имени мало — в X его кто угодно может повторить.
+    /// Поля у обоих источников одни и те же, различается только имя объекта с автором.
     /// </summary>
-    private static string? ReadAuthor(JsonElement root)
+    private static string? ReadAuthor(JsonElement root, string property)
     {
-        if (!root.TryGetProperty("user", out var user))
+        if (!root.TryGetProperty(property, out var user))
         {
             return null;
         }
