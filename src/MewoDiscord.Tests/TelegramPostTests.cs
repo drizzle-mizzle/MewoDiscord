@@ -25,6 +25,10 @@ public class TelegramPostTests
           <i class="tgme_widget_message_video_thumb" style="background-image:url('https://cdn4.telesco.pe/file/thumb.jpg')"></i>
         </div>
         <div class="tgme_widget_message_text js-message_text">Первая строка<br/>вторая &amp; третья</div>
+        <div class="tgme_widget_message_footer compact js-message_footer">
+          <span class="tgme_widget_message_meta"><a class="tgme_widget_message_date" href="https://t.me/test_channel/5">
+            <time datetime="2026-08-24T19:14:14+00:00" class="time">21:14</time></a></span>
+        </div>
         """;
 
     private const string PhotoPostHtml = """
@@ -174,6 +178,39 @@ public class TelegramPostTests
     }
 
     [Fact]
+    public void Telegram_ЛогинКаналаБерётсяИзСсылкиНаНего()
+    {
+        var post = TelegramPostClient.ParsePost(VideoPostHtml);
+
+        Assert.NotNull(post);
+        Assert.Equal("Тестовый канал", post.AuthorName);
+        Assert.Equal("@test_channel", post.AuthorHandle);
+    }
+
+    [Fact]
+    public void Telegram_ДатаПостаЧитаетсяИзВиджета()
+    {
+        var post = TelegramPostClient.ParsePost(VideoPostHtml);
+
+        Assert.NotNull(post);
+        Assert.Equal(new DateTimeOffset(2026, 8, 24, 19, 14, 14, TimeSpan.Zero), post.PublishedAt);
+    }
+
+    /// <summary>
+    /// Поста без даты и логина не бывает, но виджет мог поменять разметку: тогда просто
+    /// нет ни того, ни другого, а пост показывается.
+    /// </summary>
+    [Fact]
+    public void Telegram_БезДатыИЛогинаПостВсёРавноРазбирается()
+    {
+        var post = TelegramPostClient.ParsePost(RepeatedVideoPostHtml);
+
+        Assert.NotNull(post);
+        Assert.Null(post.AuthorHandle);
+        Assert.Null(post.PublishedAt);
+    }
+
+    [Fact]
     public void Telegram_КороткаяПодписьПередаётсяКакЕсть()
     {
         Assert.Equal("первая\nвторая", PostMediaHandler.PrepareCaption("первая\nвторая"));
@@ -186,6 +223,57 @@ public class TelegramPostTests
 
         Assert.EndsWith("…", caption);
         Assert.True(caption.Length < 4000, $"длина {caption.Length} не влезает в лимит компонента");
+    }
+
+    /// <summary>
+    /// Заголовок общий для всех источников: ссылка подписана логином, имя идёт строкой ниже.
+    /// </summary>
+    [Fact]
+    public void Telegram_ЗаголовокСсылаетсяЛогиномАИмяНиже()
+    {
+        var post = new SocialPost("🐝🇬🇷", "@bee_fumo", "Yuri things..", [], PublishedAt: null);
+
+        var header = PostMediaHandler.BuildHeaderText(post, "https://x.com/bee_fumo/status/1");
+
+        Assert.Equal("### [@bee_fumo](https://x.com/bee_fumo/status/1)\n**🐝🇬🇷**\nYuri things..", header);
+    }
+
+    [Fact]
+    public void Telegram_ИмяРавноеЛогинуВторойРазНеПишется()
+    {
+        var post = new SocialPost("bee_fumo", "@bee_fumo", null, [], PublishedAt: null);
+
+        var header = PostMediaHandler.BuildHeaderText(post, "https://x.com/bee_fumo/status/1");
+
+        Assert.Equal("### [@bee_fumo](https://x.com/bee_fumo/status/1)", header);
+    }
+
+    /// <summary>
+    /// Логина нет — подписью становится имя, и вот тут эмодзи из него вычёркиваются.
+    /// </summary>
+    [Fact]
+    public void Telegram_БезЛогинаПодписьюИдётИмя()
+    {
+        var post = new SocialPost("Тестовый канал", null, null, [], PublishedAt: null);
+
+        var header = PostMediaHandler.BuildHeaderText(post, "https://t.me/test_channel/5");
+
+        Assert.Equal("### [Тестовый канал](https://t.me/test_channel/5)", header);
+    }
+
+    [Fact]
+    public void Telegram_ДатаВПодписиУходитМеткойВремени()
+    {
+        var footer = PostMediaHandler.BuildFooterText(
+            "Telegram", icon: null, new DateTimeOffset(2026, 8, 24, 19, 14, 14, TimeSpan.Zero));
+
+        Assert.Equal("-# Telegram • <t:1787598854:f>", footer);
+    }
+
+    [Fact]
+    public void Telegram_БезДатыПодписьПрежняя()
+    {
+        Assert.Equal("-# Telegram", PostMediaHandler.BuildFooterText("Telegram", icon: null, publishedAt: null));
     }
 
     /// <summary>

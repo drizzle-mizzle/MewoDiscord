@@ -8,10 +8,18 @@ namespace MewoDiscord.Utils;
 public record SocialMedia(string Url, bool IsVideo, string? ThumbnailUrl);
 
 /// <summary>
-/// Разобранный пост: автор, текст и медиа. Вид общий для всех источников — дальше с ним
-/// работает PostMediaHandler, которому уже всё равно, из Telegram пост или из X.
+/// Разобранный пост: автор, текст, медиа и время публикации. Вид общий для всех источников —
+/// дальше с ним работает PostMediaHandler, которому уже всё равно, из Telegram пост или из X.
+/// Логин автора лежит отдельно от имени: подписью ссылки идёт он, а имя — строкой ниже.
+/// Логин из латиницы и цифр, и ссылка с ним рисуется всегда; имя бывает каким угодно,
+/// вплоть до одних эмодзи, с которыми Discord ссылку не рисует вовсе.
 /// </summary>
-public record SocialPost(string? AuthorName, string? Caption, IReadOnlyList<SocialMedia> Media);
+public record SocialPost(
+    string? AuthorName,
+    string? AuthorHandle,
+    string? Caption,
+    IReadOnlyList<SocialMedia> Media,
+    DateTimeOffset? PublishedAt);
 
 /// <summary>
 /// Скачанный медиафайл. Content == null означает, что файл не влез в лимит Discord.

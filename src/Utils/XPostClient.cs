@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Text.Json;
 
@@ -37,7 +38,12 @@ public static class XPostClient
     /// <summary>
     /// Пост до выбора качества.
     /// </summary>
-    internal record LadderPost(string? AuthorName, string? Caption, IReadOnlyList<MediaLadder> Media);
+    internal record LadderPost(
+        string? AuthorName,
+        string? AuthorHandle,
+        string? Caption,
+        IReadOnlyList<MediaLadder> Media,
+        DateTimeOffset? PublishedAt);
 
     /// <summary>
     /// Ссылка на сам пост — для заголовка и сообщения о невлезшем файле.
@@ -178,7 +184,9 @@ public static class XPostClient
                 return null;
             }
 
-            return new LadderPost(ReadAuthor(root, "user"), caption, media);
+            var (name, handle) = ReadAuthor(root, "user");
+
+            return new LadderPost(name, handle, caption, media, ReadDate(root));
         }
         catch (JsonException ex)
         {
@@ -203,7 +211,7 @@ public static class XPostClient
             media.Add(new SocialMedia(url, ladder.IsVideo, ladder.ThumbnailUrl));
         }
 
-        return new SocialPost(post.AuthorName, post.Caption, media);
+        return new SocialPost(post.AuthorName, post.AuthorHandle, post.Caption, media, post.PublishedAt);
     }
 
     private static async Task<string> PickVariantAsync(MediaLadder ladder, ulong maxBytes)
@@ -302,7 +310,9 @@ public static class XPostClient
                 return null;
             }
 
-            return new LadderPost(ReadAuthor(tweet, "author"), caption, media);
+            var (name, handle) = ReadAuthor(tweet, "author");
+
+            return new LadderPost(name, handle, caption, media, ReadFxDate(tweet));
         }
         catch (JsonException ex)
         {
@@ -412,25 +422,50 @@ public static class XPostClient
     }
 
     /// <summary>
-    /// Автор в виде «Имя (@логин)»: одного имени мало — в X его кто угодно может повторить.
-    /// Поля у обоих источников одни и те же, различается только имя объекта с автором.
+    /// Автор: показываемое имя и логин порознь. Одного имени мало — в X его кто угодно
+    /// может повторить, поэтому ссылка подписывается логином. Поля у обоих источников
+    /// одни и те же, различается только имя объекта с автором.
     /// </summary>
-    private static string? ReadAuthor(JsonElement root, string property)
+    private static (string? Name, string? Handle) ReadAuthor(JsonElement root, string property)
     {
         if (!root.TryGetProperty(property, out var user))
         {
-            return null;
+            return (null, null);
         }
 
-        var name = ReadText(user, "name");
         var login = ReadText(user, "screen_name");
 
-        if (name == null)
+        return (ReadText(user, "name"), login == null ? null : $"@{login}");
+    }
+
+    /// <summary>
+    /// Дата публикации: штатная ручка отдаёт её обычным ISO-временем.
+    /// Не разобралась — обойдёмся без даты, в подписи её просто не будет.
+    /// </summary>
+    private static DateTimeOffset? ReadDate(JsonElement root)
+    {
+        var text = ReadText(root, "created_at");
+
+        return text != null && DateTimeOffset.TryParse(
+            text, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal, out var date)
+            ? date
+            : null;
+    }
+
+    /// <summary>
+    /// Дата у читалки: секунды эпохи полем created_timestamp. Рядом лежит created_at,
+    /// но в собственном формате X («Mon Aug 24 19:14:14 +0000 2026»), поэтому он только
+    /// запасной — разберётся, и хорошо.
+    /// </summary>
+    private static DateTimeOffset? ReadFxDate(JsonElement tweet)
+    {
+        if (tweet.TryGetProperty("created_timestamp", out var seconds) &&
+            seconds.ValueKind == JsonValueKind.Number)
         {
-            return login == null ? null : $"@{login}";
+            return DateTimeOffset.FromUnixTimeSeconds(seconds.GetInt64());
         }
 
-        return login == null ? name : $"{name} (@{login})";
+        return ReadDate(tweet);
     }
 
     private static string? ReadText(JsonElement element, string name) =>

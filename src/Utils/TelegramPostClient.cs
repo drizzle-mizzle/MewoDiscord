@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Text.RegularExpressions;
 using MewoDiscord.Helpers;
@@ -77,7 +78,28 @@ public static partial class TelegramPostClient
             return null;
         }
 
-        return new SocialPost(channelName, caption, media);
+        var channel = FirstGroup(OwnerLinkRegex(), html);
+
+        return new SocialPost(
+            channelName,
+            channel == null ? null : $"@{channel}",
+            caption,
+            media,
+            ReadDate(html));
+    }
+
+    /// <summary>
+    /// Время публикации. Не нашли или не разобрали — обойдёмся без даты: в подписи
+    /// её просто не будет.
+    /// </summary>
+    private static DateTimeOffset? ReadDate(string html)
+    {
+        var raw = FirstGroup(MessageDateRegex(), html);
+
+        return raw != null && DateTimeOffset.TryParse(
+            raw, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal, out var date)
+            ? date
+            : null;
     }
 
     /// <summary>
@@ -138,6 +160,19 @@ public static partial class TelegramPostClient
 
     [GeneratedRegex(@"tgme_widget_message_owner_name""[^>]*>\s*(?:<span[^>]*>)?([^<]+)", RegexOptions.IgnoreCase)]
     private static partial Regex OwnerNameRegex();
+
+    /// <summary>
+    /// Логин канала берём из ссылки на него же: в имени он не написан, а подписью
+    /// нашей ссылки идёт именно логин.
+    /// </summary>
+    [GeneratedRegex(@"tgme_widget_message_owner_name""[^>]*href=""https://t\.me/([A-Za-z0-9_]+)""", RegexOptions.IgnoreCase)]
+    private static partial Regex OwnerLinkRegex();
+
+    /// <summary>
+    /// Дату виджет кладёт атрибутом datetime в элемент времени внутри ссылки на пост.
+    /// </summary>
+    [GeneratedRegex(@"tgme_widget_message_date[^>]*>\s*<time[^>]*datetime=""([^""]+)""", RegexOptions.IgnoreCase)]
+    private static partial Regex MessageDateRegex();
 
     [GeneratedRegex(@"<br\s*/?>", RegexOptions.IgnoreCase)]
     private static partial Regex LineBreakRegex();

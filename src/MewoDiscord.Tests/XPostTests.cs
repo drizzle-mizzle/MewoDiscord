@@ -17,6 +17,7 @@ public class XPostTests
     private const string VideoPostJson = """
         {
           "id_str": "2090877991228264814",
+          "created_at": "2026-08-24T19:14:14.000Z",
           "text": "Ракета &amp; телескоп https://t.co/nCZCpF1MIO https://t.co/mEdIaLnKs",
           "entities": { "urls": [
             { "url": "https://t.co/nCZCpF1MIO", "expanded_url": "https://go.nasa.gov/45FxOK8" } ] },
@@ -80,6 +81,8 @@ public class XPostTests
             "url": "https://x.com/khyleri/status/2091967335913668866",
             "id": "2091967335913668866",
             "text": "Yuri things..",
+            "created_at": "Mon Aug 24 19:14:14 +0000 2026",
+            "created_timestamp": 1787598854,
             "author": { "screen_name": "khyleri", "name": "Khyle." },
             "media": { "all": [ {
               "id": "2091966708340883456",
@@ -164,12 +167,22 @@ public class XPostTests
     }
 
     [Fact]
-    public void X_АвторСЛогином()
+    public void X_ИмяИЛогинАвтораПорознь()
     {
         var post = XPostClient.ParsePost(VideoPostJson);
 
         Assert.NotNull(post);
-        Assert.Equal("NASA (@NASA)", post.AuthorName);
+        Assert.Equal("NASA", post.AuthorName);
+        Assert.Equal("@NASA", post.AuthorHandle);
+    }
+
+    [Fact]
+    public void X_ДатаПостаЧитаетсяИзОтвета()
+    {
+        var post = XPostClient.ParsePost(VideoPostJson);
+
+        Assert.NotNull(post);
+        Assert.Equal(new DateTimeOffset(2026, 8, 24, 19, 14, 14, TimeSpan.Zero), post.PublishedAt);
     }
 
     [Fact]
@@ -250,9 +263,22 @@ public class XPostTests
         var post = XPostClient.ParseFxPost(FxVideoPostJson);
 
         Assert.NotNull(post);
-        Assert.Equal("Khyle. (@khyleri)", post.AuthorName);
+        Assert.Equal("Khyle.", post.AuthorName);
+        Assert.Equal("@khyleri", post.AuthorHandle);
         Assert.Equal("Yuri things..", post.Caption);
         Assert.Equal("https://pbs.twimg.com/amplify_video_thumb/poster.jpg", Assert.Single(post.Media).ThumbnailUrl);
+    }
+
+    /// <summary>
+    /// Дату читалка отдаёт секундами эпохи: собственный формат X рядом только на подхвате.
+    /// </summary>
+    [Fact]
+    public void X_ЧиталкаОтдаётДатуСекундамиЭпохи()
+    {
+        var post = XPostClient.ParseFxPost(FxVideoPostJson);
+
+        Assert.NotNull(post);
+        Assert.Equal(new DateTimeOffset(2026, 8, 24, 19, 14, 14, TimeSpan.Zero), post.PublishedAt);
     }
 
     [Fact]

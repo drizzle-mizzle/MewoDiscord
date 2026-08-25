@@ -201,27 +201,34 @@ public static partial class PostMediaHandler
             container.AddComponent(new TextDisplayBuilder().WithContent(style.TooBig(size, postUrl)));
         }
 
-        // «-# » — мелкий текст Discord, заменяет футер embed'а. Иконку сюда можно поставить
-        // только эмодзи: слота для картинки, как у футера embed'а, у компонента нет
-        var icon = style.Icon();
-        var footer = icon == null ? style.Footer() : $"{icon} {style.Footer()}";
-        container.AddComponent(new TextDisplayBuilder().WithContent($"-# {footer}"));
+        container.AddComponent(new TextDisplayBuilder()
+            .WithContent(BuildFooterText(style.Footer(), style.Icon(), post.PublishedAt)));
 
         return new ComponentBuilderV2().AddComponent(container).Build();
     }
 
     /// <summary>
-    /// Заголовок контейнера: имя автора ссылкой и текст поста под ним.
+    /// Заголовок контейнера: ссылка на пост, показываемое имя автора под ней и текст поста.
+    /// Подписью ссылки всегда идёт логин — он из латиницы и цифр, поэтому ссылка рисуется
+    /// у любого автора. Имя живёт отдельной строкой: в нём бывают эмодзи, а с ними Discord
+    /// ссылку не рисует вовсе. Логина нет (такое бывает только при неполном ответе) —
+    /// подписью становится имя, вычищенное по тем же правилам.
     /// </summary>
-    private static string? BuildHeaderText(SocialPost post, string postUrl)
+    internal static string? BuildHeaderText(SocialPost post, string postUrl)
     {
         var lines = new List<string>();
-
-        var label = BuildLinkLabel(post.AuthorName);
+        var label = BuildLinkLabel(post.AuthorHandle ?? post.AuthorName);
 
         if (label != null)
         {
             lines.Add($"### [{label}]({postUrl})");
+        }
+
+        var name = BuildDisplayName(post.AuthorName, label);
+
+        if (name != null)
+        {
+            lines.Add($"**{name}**");
         }
 
         if (post.Caption != null)
@@ -232,6 +239,40 @@ public static partial class PostMediaHandler
         return lines.Count > 0 ? string.Join("\n", lines) : null;
     }
 
+    /// <summary>
+    /// Показываемое имя автора — как есть, вместе с эмодзи: это обычный текст, а не подпись
+    /// ссылки. Имя, которое ничем не отличается от логина, второй раз не показываем.
+    /// </summary>
+    private static string? BuildDisplayName(string? authorName, string? label)
+    {
+        var name = authorName?.Trim();
+
+        if (string.IsNullOrEmpty(name) || name == label || $"@{name}" == label)
+        {
+            return null;
+        }
+
+        return name;
+    }
+
+    /// <summary>
+    /// Подпись контейнера. «-# » — мелкий текст Discord, заменяющий футер embed'а; иконку
+    /// сюда можно поставить только эмодзи, слота для картинки у компонента нет.
+    /// Дата уходит меткой времени Discord, а не готовой строкой: так каждый читает её
+    /// в своей зоне и на своём языке — ровно как в превью, которое мы погасили.
+    /// </summary>
+    internal static string BuildFooterText(string footer, Emote? icon, DateTimeOffset? publishedAt)
+    {
+        var text = icon == null ? footer : $"{icon} {footer}";
+
+        if (publishedAt != null)
+        {
+            text += $" • <t:{publishedAt.Value.ToUnixTimeSeconds()}:f>";
+        }
+
+        return $"-# {text}";
+    }
+
     private static Embed BuildEmbed(
         SocialPost post, string postUrl, string? imageUrl, IList<string> oversized, PostStyle style)
     {
@@ -240,9 +281,17 @@ public static partial class PostMediaHandler
             .WithUrl(postUrl)
             .WithFooter(style.Footer(), BotEmotes.IconUrl(style.Icon()));
 
-        if (!string.IsNullOrWhiteSpace(post.AuthorName))
+        if (post.PublishedAt != null)
         {
-            embed.WithAuthor(post.AuthorName, url: postUrl);
+            // У embed'а под дату свой слот — там она выглядит ровно как в погашенном превью
+            embed.WithTimestamp(post.PublishedAt.Value);
+        }
+
+        var author = post.AuthorName ?? post.AuthorHandle;
+
+        if (!string.IsNullOrWhiteSpace(author))
+        {
+            embed.WithAuthor(author, url: postUrl);
         }
 
         if (imageUrl != null)
