@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 using Discord;
 using Discord.WebSocket;
@@ -23,9 +24,10 @@ public static partial class BotLogger
     private static ulong _channelId;
 
     /// <summary>
-    /// Треды текущей сессии: ключ → тред.
+    /// Треды текущей сессии: ключ → тред. Заполняется при старте, читается из фоновых
+    /// задач команд и хитов — отсюда потокобезопасный словарь.
     /// </summary>
-    private static readonly Dictionary<string, IThreadChannel> _threads = new();
+    private static readonly ConcurrentDictionary<string, IThreadChannel> _threads = new();
 
     /// <summary>
     /// Устанавливает клиент Discord и читает ID канала логов из конфига.

@@ -54,6 +54,12 @@ public static class CustomAiActionStore
 
     private static volatile IReadOnlyList<CustomAiAction> _actions = [];
 
+    /// <summary>
+    /// Вотчер каталога действий: хранится полем, чтобы не быть собранным сборщиком
+    /// мусора — см. <see cref="HotReload.Watch"/>.
+    /// </summary>
+    private static FileSystemWatcher? _watcher;
+
     private static string ActionsDirectory => Path.Combine(AppConfig.FilesDirectory, ActionsFolderName);
 
     /// <summary>
@@ -74,31 +80,24 @@ public static class CustomAiActionStore
         try
         {
             Directory.CreateDirectory(ActionsDirectory);
-
-            var watcher = new FileSystemWatcher(ActionsDirectory, "*.ini")
-            {
-                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName,
-                EnableRaisingEvents = true
-            };
-
-            watcher.Changed += (_, _) => DelayedReload();
-            watcher.Created += (_, _) => DelayedReload();
-            watcher.Deleted += (_, _) => DelayedReload();
-            watcher.Renamed += (_, _) => DelayedReload();
         }
         catch (Exception ex)
         {
-            BotLogger.Warning("Слежение за каталогом действий не включено: {Message}", ex.Message);
+            BotLogger.Warning("Каталог действий не создан: {Message}", ex.Message);
+            return;
+        }
+
+        // Новый файл здесь — это новое действие, поэтому следим и за именами, а не только
+        // за содержимым
+        _watcher = HotReload.Watch(ActionsDirectory, "*.ini", Reload, watchNames: true);
+
+        if (_watcher == null)
+        {
+            BotLogger.Warning("Слежение за каталогом действий не включено");
         }
     }
 
     #region Internals
-
-    private static void DelayedReload()
-    {
-        Thread.Sleep(100);
-        Reload();
-    }
 
     private static void Reload()
     {

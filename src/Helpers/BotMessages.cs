@@ -275,31 +275,20 @@ public static class BotMessages
 
     #region Internals
 
-    private static readonly string MessagesPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Files", "messages.ini");
+    private static string MessagesPath => Path.Combine(AppConfig.FilesDirectory, "messages.ini");
     private static volatile Dictionary<string, string> _templates = new();
+
+    /// <summary>
+    /// Вотчер перечитки: хранится полем, чтобы не быть собранным сборщиком мусора —
+    /// см. <see cref="HotReload.Watch"/>.
+    /// </summary>
+    private static readonly FileSystemWatcher? _watcher;
 
     static BotMessages()
     {
         Reload();
 
-        try
-        {
-            var dir = Path.GetDirectoryName(MessagesPath) ?? ".";
-            var watcher = new FileSystemWatcher(dir, Path.GetFileName(MessagesPath))
-            {
-                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size,
-                EnableRaisingEvents = true
-            };
-            watcher.Changed += (_, _) =>
-            {
-                Thread.Sleep(100);
-                Reload();
-            };
-        }
-        catch
-        {
-            // Watcher не критичен
-        }
+        _watcher = HotReload.Watch(Path.GetDirectoryName(MessagesPath) ?? ".", Path.GetFileName(MessagesPath), Reload);
     }
 
     private static void Reload()

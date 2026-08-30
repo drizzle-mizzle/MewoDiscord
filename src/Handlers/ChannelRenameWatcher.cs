@@ -214,7 +214,7 @@ public static class ChannelRenameWatcher
         }
         catch (Exception ex)
         {
-            BotLogger.Error("Вотчер имени канала {ChannelId} остановлен: {Message}", channelId, ex.Message);
+            BotLogger.Error(ex, "Вотчер имени канала {ChannelId} остановлен: {Message}", channelId, ex.Message);
         }
         finally
         {

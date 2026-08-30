@@ -10,8 +10,9 @@ using MewoDiscord.Utils;
 using Serilog;
 using Serilog.Events;
 
-namespace MewoDiscord;
+using System.Runtime.InteropServices;
 
+namespace MewoDiscord;
 
 internal class Program
 {
@@ -20,6 +21,7 @@ internal class Program
     private static bool _channelNamesRestored;
     private static bool _commandsRegistered;
     private static bool _emotesReady;
+    private static bool _loggerSessionReady;
 
     /// <summary>
     /// Модули команд отключённой ИИ-части: код оставлен, но в Discord не регистрируется.
@@ -109,6 +111,7 @@ internal class Program
 
         // Обработчики событий
         _client.Log += OnLog;
+        _interactions.Log += OnLog;
         _client.Ready += () => RunInBackground(OnReady());
         _client.InteractionCreated += interaction => RunInBackground(OnInteractionCreated(interaction));
         _client.MessageReceived += message => RunInBackground(MessageHandler.HandleMessageReceived(message));
@@ -118,13 +121,21 @@ internal class Program
         await _client.LoginAsync(TokenType.Bot, AppConfig.BotToken);
         await _client.StartAsync();
 
-        // Graceful shutdown по Ctrl+C
+        // Graceful shutdown по Ctrl+C (запуск с консоли) и по SIGTERM (docker stop —
+        // основной способ остановки: без него контейнер гасят убийством процесса,
+        // и каждая штатная остановка выглядит в логах падением)
         var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) =>
         {
             e.Cancel = true;
             cts.Cancel();
         };
+
+        using var sigterm = PosixSignalRegistration.Create(PosixSignal.SIGTERM, context =>
+        {
+            context.Cancel = true;
+            cts.Cancel();
+        });
 
         try
         {
@@ -148,18 +159,11 @@ internal class Program
     /// </summary>
     internal static async Task<(int RemovedGlobal, int RemovedGuild, int Registered)> ReinstallCommandsAsync(SocketGuild? guild)
     {
-        // Глобальных команд бот больше не заводит, но могли остаться от прошлых версий:
-        // рядом с серверными они дублировались бы в списке у клиентов
-        var existingGlobal = await _client!.Rest.GetGlobalApplicationCommands();
-
-        if (existingGlobal.Count > 0)
-        {
-            await _client.Rest.DeleteAllGlobalCommandsAsync();
-        }
+        var removedGlobal = await DeleteStaleGlobalCommandsAsync();
 
         if (guild == null)
         {
-            return (existingGlobal.Count, 0, 0);
+            return (removedGlobal, 0, 0);
         }
 
         var removedGuild = (await guild.GetApplicationCommandsAsync()).Count;
@@ -167,7 +171,24 @@ internal class Program
         // Регистрация серверных команд — bulk-перезапись: устаревшие исчезают сами
         var registered = await _interactions!.RegisterCommandsToGuildAsync(guild.Id);
 
-        return (existingGlobal.Count, removedGuild, registered.Count);
+        return (removedGlobal, removedGuild, registered.Count);
+    }
+
+    /// <summary>
+    /// Сносит глобальные слеш-команды: бот их больше не заводит, но могли остаться
+    /// от прошлых версий, и рядом с серверными они дублировались бы в списке у клиентов.
+    /// Возвращает количество снесённых.
+    /// </summary>
+    private static async Task<int> DeleteStaleGlobalCommandsAsync()
+    {
+        var existing = await _client!.Rest.GetGlobalApplicationCommands();
+
+        if (existing.Count > 0)
+        {
+            await _client.Rest.DeleteAllGlobalCommandsAsync();
+        }
+
+        return existing.Count;
     }
 
     private static async Task OnReady()
@@ -180,7 +201,13 @@ internal class Program
             await RegisterGuildCommandsAsync();
         }
 
-        await BotLogger.InitializeSessionAsync();
+        // Тоже разово: иначе каждое переподключение gateway слало бы в канал логов
+        // новое «Бот запущен» и заводило вторую пару тредов
+        if (!_loggerSessionReady)
+        {
+            _loggerSessionReady = true;
+            await BotLogger.InitializeSessionAsync();
+        }
 
         // Эмодзи приложения живут у самого приложения, а не у сервера: заводятся один раз
         if (!_emotesReady)
@@ -205,17 +232,14 @@ internal class Program
     /// </summary>
     private static async Task RegisterGuildCommandsAsync()
     {
-        // Глобальные команды могли остаться от прошлых версий бота: рядом с серверными
-        // они дублировались бы в списке у клиентов
-        var staleGlobal = await _client!.Rest.GetGlobalApplicationCommands();
+        var staleGlobal = await DeleteStaleGlobalCommandsAsync();
 
-        if (staleGlobal.Count > 0)
+        if (staleGlobal > 0)
         {
-            await _client.Rest.DeleteAllGlobalCommandsAsync();
-            BotLogger.Information("Удалено глобальных слеш-команд: {Count}", staleGlobal.Count);
+            BotLogger.Information("Удалено глобальных слеш-команд: {Count}", staleGlobal);
         }
 
-        foreach (var guild in _client.Guilds)
+        foreach (var guild in _client!.Guilds)
         {
             try
             {
@@ -233,11 +257,21 @@ internal class Program
     private static async Task OnInteractionCreated(SocketInteraction interaction)
     {
         var context = new SocketInteractionContext(_client!, interaction);
-        await _interactions!.ExecuteCommandAsync(context, services: null);
+
+        // Interaction Framework ловит исключения команд сам и отдаёт их результатом:
+        // выброшенный результат означает, что упавшая команда не оставит ни строчки
+        // в логе, а пользователь увидит только «приложение не отвечает»
+        var result = await _interactions!.ExecuteCommandAsync(context, services: null);
+
+        if (!result.IsSuccess)
+        {
+            BotLogger.Error("Команда не выполнена ({Error}): {Reason}", result.Error?.ToString() ?? "неизвестно", result.ErrorReason ?? string.Empty);
+        }
     }
 
     /// <summary>
-    /// Запускает задачу в фоне, не блокируя gateway. Ошибки логируются.
+    /// Наблюдает за уже запущенной задачей обработчика, не задерживая поток gateway,
+    /// и логирует необработанные ошибки: это последний рубеж для всех событий.
     /// </summary>
     private static Task RunInBackground(Task task)
     {
@@ -249,7 +283,7 @@ internal class Program
             }
             catch (Exception ex)
             {
-                BotLogger.Error("Необработанная ошибка в обработчике: {Message}", ex.Message);
+                BotLogger.Error(ex, "Необработанная ошибка в обработчике: {Message}", ex.Message);
             }
         });
 
@@ -272,5 +306,4 @@ internal class Program
         BotLogger.Write(level, message.Exception, "[{Source}] {Message}", message.Source, message.Message);
         return Task.CompletedTask;
     }
-
 }

@@ -173,30 +173,19 @@ public static class AppConfig
     private static string ConfigPath => Path.Combine(FilesDirectory, "config.ini");
     private static volatile Dictionary<string, Dictionary<string, string>> _sections = new();
 
+    /// <summary>
+    /// Вотчер перечитки. Хранится полем не для использования, а чтобы жить: работающий
+    /// вотчер рантайм держит слабой ссылкой, и без укоренения сборщик мусора выключил бы
+    /// перечитку config.ini на лету.
+    /// </summary>
+    private static readonly FileSystemWatcher? _watcher;
+
     static AppConfig()
     {
         Reload();
         UseChatGpt = GetBool("COMMON", nameof(UseChatGpt), false);
 
-        try
-        {
-            var dir = Path.GetDirectoryName(ConfigPath) ?? ".";
-            var watcher = new FileSystemWatcher(dir, Path.GetFileName(ConfigPath))
-            {
-                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size,
-                EnableRaisingEvents = true
-            };
-
-            watcher.Changed += (_, _) =>
-            {
-                Thread.Sleep(100);
-                Reload();
-            };
-        }
-        catch
-        {
-            // Watcher не критичен
-        }
+        _watcher = HotReload.Watch(Path.GetDirectoryName(ConfigPath) ?? ".", Path.GetFileName(ConfigPath), Reload);
     }
 
     public static string Get(string section, string key, string defaultValue = "") =>
