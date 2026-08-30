@@ -1,4 +1,4 @@
-namespace MewoDiscord.Helpers;
+﻿namespace MewoDiscord.Helpers;
 
 public static class BotMessages
 {
@@ -91,6 +91,12 @@ public static class BotMessages
     public static string SayDone() =>
         Format(nameof(SayDone));
 
+    public static string HelpText() =>
+        Format(nameof(HelpText));
+
+    public static string HelpTextChatGpt() =>
+        Format(nameof(HelpTextChatGpt));
+
     public static string PurgeDone(string count) =>
         Format(nameof(PurgeDone), ("{count}", count));
 
@@ -99,6 +105,15 @@ public static class BotMessages
 
     public static string PurgeNoPermission() =>
         Format(nameof(PurgeNoPermission));
+
+    public static string PurgeScanned(string count) =>
+        Format(nameof(PurgeScanned), ("{count}", count));
+
+    public static string PurgeScanStopped(string found, string requested) =>
+        Format(nameof(PurgeScanStopped), ("{found}", found), ("{requested}", requested));
+
+    public static string PurgePeriodClamped() =>
+        Format(nameof(PurgePeriodClamped));
 
     public static string PurgeNotTextChannel() =>
         Format(nameof(PurgeNotTextChannel));
@@ -196,9 +211,6 @@ public static class BotMessages
     public static string MediaFormatNotSupported(string format) =>
         Format(nameof(MediaFormatNotSupported), ("{format}", format));
 
-    public static string MediaPlanUnclear() =>
-        Format(nameof(MediaPlanUnclear));
-
     public static string MediaFailed() =>
         Format(nameof(MediaFailed));
 
@@ -216,9 +228,6 @@ public static class BotMessages
 
     public static string MediaGifTooHeavy() =>
         Format(nameof(MediaGifTooHeavy));
-
-    public static string MediaPlanUnclearVideo() =>
-        Format(nameof(MediaPlanUnclearVideo));
 
     public static string MediaSourceGone() =>
         Format(nameof(MediaSourceGone));

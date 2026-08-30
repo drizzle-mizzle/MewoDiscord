@@ -8,9 +8,16 @@ namespace MewoDiscord.Commands;
 [DefaultMemberPermissions(GuildPermission.Administrator)]
 public class PurgeCommand : InteractionModuleBase<SocketInteractionContext>
 {
+    /// <summary>
+    /// Сколько сообщений канала просматриваем, набирая нужное число сообщений автора.
+    /// Страховка от бездонного канала, где спрошенный человек давно не писал: десять
+    /// запросов истории — это недели переписки на нашем сервере.
+    /// </summary>
+    private const int MaxScannedMessages = 1000;
+
     [SlashCommand("by-count", "Удалить последние N сообщений")]
     public async Task ByCount(
-        [Summary("count", "Количество сообщений для удаления (1–100)")]
+        [Summary("count", "Сколько сообщений удалить (1–100)")]
         [MinValue(1), MaxValue(100)]
         int count,
         [Summary("user", "Удалить только сообщения этого пользователя")]
@@ -24,34 +31,46 @@ public class PurgeCommand : InteractionModuleBase<SocketInteractionContext>
 
         await DeferAsync(ephemeral: true);
 
-        var messages = await textChannel.GetMessagesAsync(count).FlattenAsync();
-
-        if (user is not null)
-        {
-            messages = messages.Where(m => m.Author.Id == user.Id);
-        }
-
         // Discord API не позволяет массово удалять сообщения старше 14 дней
         var cutoff = DateTimeOffset.UtcNow.AddDays(-14);
-        var deletable = messages.Where(m => m.CreatedAt > cutoff).ToList();
-        var tooOld = messages.Count() - deletable.Count;
 
-        if (deletable.Count > 0)
+        var (deletable, scanned, exhausted) = user is null
+            ? await TakeLatestAsync(textChannel, count, cutoff)
+            : await CollectFromUserAsync(textChannel, user, count, cutoff);
+
+        if (deletable.Count > 0 && !await TryDeleteAsync(textChannel, deletable))
         {
-            await textChannel.DeleteMessagesAsync(deletable);
+            return;
         }
 
         var reply = BotMessages.PurgeDone(deletable.Count.ToString());
+        var incomplete = false;
 
-        // Часть сообщений могла оказаться старше 14 дней — тогда исход неполный, цвет жёлтый
-        if (tooOld > 0)
+        if (user is not null)
         {
-            reply += "\n" + BotMessages.PurgeTooOld(tooOld.ToString());
+            reply += "\n" + BotMessages.PurgeScanned(scanned.ToString());
+
+            // Набрали меньше, чем просили: без этой строки пользователь решит, что бот
+            // удалил не всё по своей прихоти
+            if (deletable.Count < count && exhausted)
+            {
+                reply += "\n" + BotMessages.PurgeScanStopped(deletable.Count.ToString(), count.ToString());
+                incomplete = true;
+            }
+        }
+        else if (scanned > deletable.Count)
+        {
+            // Часть сообщений оказалась старше 14 дней — исход неполный, цвет жёлтый
+            reply += "\n" + BotMessages.PurgeTooOld((scanned - deletable.Count).ToString());
+            incomplete = true;
         }
 
-        var embed = tooOld > 0 ? BotEmbeds.Warning(reply) : BotEmbeds.Success(reply);
+        var embed = incomplete ? BotEmbeds.Warning(reply) : BotEmbeds.Success(reply);
 
-        BotLogger.LogCommand("/purge by-count — {User} удалил {Count} сообщений в #{Channel}", Context.User.Username, deletable.Count, textChannel.Name);
+        BotLogger.LogCommand(
+            "/purge by-count — {User} удалил {Count} сообщений в #{Channel} (просмотрено {Scanned})",
+            Context.User.Username, deletable.Count, textChannel.Name, scanned);
+
         await FollowupAsync(embed: embed, ephemeral: true);
     }
 
@@ -101,7 +120,12 @@ public class PurgeCommand : InteractionModuleBase<SocketInteractionContext>
         // Discord API не позволяет массово удалять сообщения старше 14 дней
         var cutoff = DateTimeOffset.UtcNow.AddDays(-14);
 
-        if (fromUtc < cutoff)
+        // Запрошенное начало старше границы двух недель — двигаем его, но молчать
+        // об этом нельзя: «удали с июля» ответило бы зелёным «удалено 37», умолчав,
+        // что месяц истории остался на месте
+        var clamped = fromUtc < cutoff;
+
+        if (clamped)
         {
             fromUtc = cutoff;
         }
@@ -134,26 +158,126 @@ public class PurgeCommand : InteractionModuleBase<SocketInteractionContext>
             fromSnowflake = batchList.Max(m => m.Id);
         }
 
-        var deletable = allMessages.Where(m => m.CreatedAt > cutoff).ToList();
-        var tooOld = allMessages.Count - deletable.Count;
+        // Старше границы тут быть уже не может: с неё и начали выборку
+        var deletable = allMessages;
 
         // Удаляем батчами по 100 (ограничение Discord API)
         foreach (var chunk in deletable.Chunk(100))
         {
-            await textChannel.DeleteMessagesAsync(chunk);
+            if (!await TryDeleteAsync(textChannel, chunk))
+            {
+                return;
+            }
         }
 
         var reply = BotMessages.PurgeDone(deletable.Count.ToString());
 
-        // Часть сообщений могла оказаться старше 14 дней — тогда исход неполный, цвет жёлтый
-        if (tooOld > 0)
+        if (clamped)
         {
-            reply += "\n" + BotMessages.PurgeTooOld(tooOld.ToString());
+            reply += "\n" + BotMessages.PurgePeriodClamped();
         }
 
-        var embed = tooOld > 0 ? BotEmbeds.Warning(reply) : BotEmbeds.Success(reply);
+        var embed = clamped ? BotEmbeds.Warning(reply) : BotEmbeds.Success(reply);
 
         BotLogger.LogCommand("/purge by-time — {User} удалил {Count} сообщений в #{Channel}", Context.User.Username, deletable.Count, textChannel.Name);
         await FollowupAsync(embed: embed, ephemeral: true);
     }
+
+    #region Internals
+
+    /// <summary>
+    /// Последние сообщения канала. Просмотрено здесь — это столько же, сколько взято
+    /// до отсева по возрасту: спрашивали именно последние N сообщений канала.
+    /// </summary>
+    private static async Task<(List<IMessage> Deletable, int Scanned, bool Exhausted)> TakeLatestAsync(
+        ITextChannel channel, int count, DateTimeOffset cutoff)
+    {
+        var messages = (await channel.GetMessagesAsync(count).FlattenAsync()).ToList();
+        var deletable = messages.Where(m => m.CreatedAt > cutoff).ToList();
+
+        return (deletable, messages.Count, messages.Count < count);
+    }
+
+    /// <summary>
+    /// Сообщения одного автора: листаем историю назад, пока не наберём нужное число.
+    /// «Последние N» при фильтре по человеку — это N его сообщений, а не N сообщений
+    /// канала, из которых ему принадлежит пара штук.
+    /// </summary>
+    private static async Task<(List<IMessage> Deletable, int Scanned, bool Exhausted)> CollectFromUserAsync(
+        ITextChannel channel, IUser user, int count, DateTimeOffset cutoff)
+    {
+        var collected = new List<IMessage>(count);
+        var scanned = 0;
+        ulong? oldestSeen = null;
+        var exhausted = false;
+
+        while (collected.Count < count && scanned < MaxScannedMessages)
+        {
+            var page = (oldestSeen == null
+                ? await channel.GetMessagesAsync(DiscordConfig.MaxMessagesPerBatch).FlattenAsync()
+                : await channel.GetMessagesAsync(oldestSeen.Value, Direction.Before, DiscordConfig.MaxMessagesPerBatch).FlattenAsync())
+                .ToList();
+
+            if (page.Count == 0)
+            {
+                exhausted = true;
+                break;
+            }
+
+            foreach (var message in page)
+            {
+                scanned++;
+
+                // Страница идёт от новых к старым: первое же сообщение за границей
+                // означает, что дальше только старше — удалять их Discord не даст
+                if (message.CreatedAt <= cutoff)
+                {
+                    exhausted = true;
+                    break;
+                }
+
+                if (message.Author.Id == user.Id)
+                {
+                    collected.Add(message);
+
+                    if (collected.Count == count)
+                    {
+                        break;
+                    }
+                }
+            }
+
+            if (exhausted || page.Count < DiscordConfig.MaxMessagesPerBatch)
+            {
+                exhausted = true;
+                break;
+            }
+
+            oldestSeen = page[^1].Id;
+        }
+
+        return (collected, scanned, exhausted || collected.Count < count);
+    }
+
+    /// <summary>
+    /// Удаляет пачку. false — не хватило прав: без обработки команда падала бы молча,
+    /// а пользователь видел бы «приложение не отвечает».
+    /// </summary>
+    private async Task<bool> TryDeleteAsync(ITextChannel channel, IEnumerable<IMessage> messages)
+    {
+        try
+        {
+            await channel.DeleteMessagesAsync(messages);
+            return true;
+        }
+        catch (Discord.Net.HttpException ex) when (ex.HttpCode == System.Net.HttpStatusCode.Forbidden)
+        {
+            BotLogger.Warning("Удаление сообщений в #{Channel} запрещено: {Message}", channel.Name, ex.Message);
+            await FollowupAsync(embed: BotEmbeds.Error(BotMessages.PurgeNoPermission()), ephemeral: true);
+
+            return false;
+        }
+    }
+
+    #endregion
 }
