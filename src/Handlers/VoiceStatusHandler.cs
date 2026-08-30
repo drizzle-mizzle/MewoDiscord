@@ -10,6 +10,13 @@ public static class VoiceStatusHandler
     private static readonly AllowedMentions NoMentions = AllowedMentions.None;
     private static readonly ConcurrentDictionary<ulong, DateTime> ChannelTimers = new();
     private static readonly ConcurrentDictionary<ulong, IMessageChannel> ChannelTargets = new();
+
+    /// <summary>
+    /// Голосовой канал открытой сессии: сторожам, которых будит таймер, доступен только
+    /// её идентификатор, а состав канала им перепроверять надо.
+    /// </summary>
+    private static readonly ConcurrentDictionary<ulong, SocketVoiceChannel> ChannelVoices = new();
+
     private static readonly ConcurrentDictionary<ulong, SemaphoreSlim> ChannelLocks = new();
     private static readonly ConcurrentDictionary<ulong, Timer> IdleTimers = new();
 
@@ -36,39 +43,81 @@ public static class VoiceStatusHandler
     /// </summary>
     internal const string AloneButtonPrefix = "voice_alive";
 
+    /// <summary>
+    /// Что делать со сторожем одиночества, когда состав канала изменился.
+    /// </summary>
+    internal enum AloneWatchState
+    {
+        /// <summary>Оставить как есть: идущий отсчёт трогать нечем.</summary>
+        Keep,
+
+        /// <summary>Снять: сторожить больше некого.</summary>
+        Drop,
+
+        /// <summary>Завести заново: одиночка теперь другой, и его полчаса только начались.</summary>
+        Restart
+    }
+
+    /// <summary>
+    /// Что делать по срабатыванию сторожа одиночества.
+    /// </summary>
+    internal enum AloneAlarm
+    {
+        /// <summary>Снять сторож: человек уже не один или остался другой.</summary>
+        Drop,
+
+        /// <summary>Спросить «приём-приём?» — это первая фаза.</summary>
+        Ask,
+
+        /// <summary>Отключить от канала: на заданный вопрос не ответили.</summary>
+        Disconnect
+    }
+
     public static async Task HandleVoiceStateUpdated(SocketUser user, SocketVoiceState before, SocketVoiceState after)
     {
         var leftChannel = before.VoiceChannel;
         var joinedChannel = after.VoiceChannel;
 
-        var voiceChannelId = (joinedChannel ?? leftChannel)?.Id;
-
-        if (voiceChannelId == null)
+        // Микрофон, звук или стрим: канал не менялся
+        if (leftChannel?.Id == joinedChannel?.Id)
         {
+            if (joinedChannel != null)
+            {
+                await UnderChannelLockAsync(joinedChannel.Id, () => HandleStateChange(user, before, after, joinedChannel));
+            }
+
             return;
         }
 
-        var semaphore = ChannelLocks.GetOrAdd(voiceChannelId.Value, _ => new SemaphoreSlim(1, 1));
+        // Переход из канала в канал — это события двух разных каналов, и каждый ведёт
+        // свой журнал, свои таймеры и своего сторожа. Уход обрабатывается под замком
+        // покинутого канала, приход — под замком нового: под одним общим замком половина
+        // работы шла бы мимо инварианта «порядок сообщений канала держит его замок»
+        if (leftChannel != null)
+        {
+            await UnderChannelLockAsync(leftChannel.Id, () => HandleLeave(user, leftChannel));
+        }
+
+        if (joinedChannel != null)
+        {
+            await UnderChannelLockAsync(joinedChannel.Id, () => HandleJoin(user, joinedChannel));
+        }
+    }
+
+    /// <summary>
+    /// Выполняет работу под замком канала. Замок сериализует всё, что пишет в журнал
+    /// канала и трогает его сторожей: события gateway, сторож тишины, сторож одиночества
+    /// и кнопку «я ещё тут». Два замка одновременно не берутся нигде — взаимной
+    /// блокировке взяться неоткуда.
+    /// </summary>
+    private static async Task UnderChannelLockAsync(ulong channelId, Func<Task> action)
+    {
+        var semaphore = ChannelLocks.GetOrAdd(channelId, _ => new SemaphoreSlim(1, 1));
         await semaphore.WaitAsync();
 
         try
         {
-            if (leftChannel?.Id != joinedChannel?.Id)
-            {
-                if (leftChannel != null)
-                {
-                    await HandleLeave(user, leftChannel);
-                }
-
-                if (joinedChannel != null)
-                {
-                    await HandleJoin(user, joinedChannel);
-                }
-            }
-            else if (joinedChannel != null)
-            {
-                await HandleStateChange(user, before, after, joinedChannel);
-            }
+            await action();
         }
         finally
         {
@@ -78,15 +127,19 @@ public static class VoiceStatusHandler
 
     private static async Task HandleJoin(SocketUser user, SocketVoiceChannel channel)
     {
-        var name = Mention(user);
+        var name = user.Mention;
 
         // Только сигнал: вотчер работает в своём цикле, журнал его не ждёт
         ChannelRenameWatcher.NotifyChannelChanged(channel);
 
-        // Первый пользователь — создаём сессию
-        if (channel.ConnectedUsers.Count == 1)
+        // Сессии ещё нет — заводим. Признак именно такой, а не «зашёл первый»:
+        // кэш Discord к моменту обработки уже знает обо всех, кто зашёл, и два
+        // почти одновременных захода в пустой канал оба увидели бы двоих —
+        // сессия не завелась бы вовсе
+        if (!ChannelTimers.ContainsKey(channel.Id))
         {
             ChannelTimers[channel.Id] = DateTime.UtcNow;
+            ChannelVoices[channel.Id] = channel;
 
             var started = BotMessages.VoiceConversationStarted();
 
@@ -130,7 +183,7 @@ public static class VoiceStatusHandler
         // Только сигнал: вотчер работает в своём цикле, журнал его не ждёт
         ChannelRenameWatcher.NotifyChannelChanged(channel);
 
-        await JournalAsync(channel.Id, BotMessages.VoiceUserLeft(Mention(user), channel.Mention));
+        await JournalAsync(channel.Id, BotMessages.VoiceUserLeft(user.Mention, channel.Mention));
 
         await SyncAloneWatchAsync(channel);
 
@@ -146,16 +199,25 @@ public static class VoiceStatusHandler
             BotMessages.VoiceConversationEnded(channel.Mention),
             BotMessages.VoiceConversationEndedCommon(channel.Mention));
 
-        StopIdleDuration(channel.Id);
-        ChannelTargets.TryRemove(channel.Id, out _);
-        ChannelTimers.TryRemove(channel.Id, out _);
+        CloseSession(channel.Id);
+    }
+
+    /// <summary>
+    /// Закрывает сессию канала: гасит сторож тишины и забывает журнал, таймер и сам канал.
+    /// </summary>
+    private static void CloseSession(ulong channelId)
+    {
+        StopIdleDuration(channelId);
+        ChannelTargets.TryRemove(channelId, out _);
+        ChannelTimers.TryRemove(channelId, out _);
+        ChannelVoices.TryRemove(channelId, out _);
     }
 
     private static async Task HandleStateChange(
         SocketUser user, SocketVoiceState before, SocketVoiceState after,
         SocketVoiceChannel channel)
     {
-        var name = Mention(user);
+        var name = user.Mention;
         var ch = channel.Mention;
 
         // Стрим — независимо от мута/дефена. Общим событием идёт только начало:
@@ -206,7 +268,12 @@ public static class VoiceStatusHandler
     /// Пишет о смене имени в журнал сессии канала, если он открыт. Вызывается вотчером имён;
     /// если сессия уже закрыта (или ещё не открыта), сообщение просто не отправляется.
     /// </summary>
-    internal static async Task NotifyChannelRenamedAsync(ulong channelId, string oldName, string newName)
+    internal static Task NotifyChannelRenamedAsync(ulong channelId, string oldName, string newName) =>
+        // Под замком канала, как и все прочие записи в журнал: вотчер имён работает
+        // в своём фоне, задержка ему не страшна, а порядок сообщений в треде важен
+        UnderChannelLockAsync(channelId, () => WriteChannelRenamedAsync(channelId, oldName, newName));
+
+    private static async Task WriteChannelRenamedAsync(ulong channelId, string oldName, string newName)
     {
         await JournalAsync(channelId, BotMessages.VoiceChannelRenamed(oldName, newName));
     }
@@ -244,7 +311,7 @@ public static class VoiceStatusHandler
     private static async Task SendDurationAsync(ulong channelId, IMessageChannel target)
     {
         await target.SendMessageAsync(
-            BotMessages.VoiceSessionDuration(GetTimer(channelId)),
+            BotMessages.VoiceSessionDuration(SessionDuration(channelId)),
             allowedMentions: NoMentions);
 
         ScheduleIdleDuration(channelId);
@@ -297,23 +364,29 @@ public static class VoiceStatusHandler
                 return;
             }
 
-            var semaphore = ChannelLocks.GetOrAdd(channelId, _ => new SemaphoreSlim(1, 1));
-            await semaphore.WaitAsync();
-
-            try
+            await UnderChannelLockAsync(channelId, async () =>
             {
                 // Под замком проверяем ещё раз: сессия могла закрыться, пока его ждали
                 var target = GetTarget(channelId);
 
-                if (target != null)
+                if (target == null)
                 {
-                    await SendDurationAsync(channelId, target);
+                    return;
                 }
-            }
-            finally
-            {
-                semaphore.Release();
-            }
+
+                // Канал пуст, а сессия жива — значит уход последнего до нас не доехал
+                // (обрыв gateway с переподключением событий не переигрывает). Печатать
+                // длительность в закончившийся разговор незачем — закрываем сессию сами,
+                // иначе строка капала бы в мёртвый тред каждые полчаса вечно
+                if (ChannelVoices.TryGetValue(channelId, out var voice) && voice.ConnectedUsers.Count == 0)
+                {
+                    BotLogger.Information("Канал {ChannelId}: сессия закрыта сторожем — канал пуст", channelId);
+                    CloseSession(channelId);
+                    return;
+                }
+
+                await SendDurationAsync(channelId, target);
+            });
         }
         catch (Exception ex)
         {
@@ -366,26 +439,17 @@ public static class VoiceStatusHandler
     private static async Task SyncAloneWatchAsync(SocketVoiceChannel channel)
     {
         var users = channel.ConnectedUsers;
+        var userId = users.Count == 1 ? users.First().Id : 0;
+        var watched = AloneWatches.TryGetValue(channel.Id, out var existing) ? existing.UserId : (ulong?)null;
 
-        // Канал опустел — сторожить некого
-        if (users.Count == 0)
+        switch (DecideWatch(users.Count, userId, watched))
         {
-            await DropAloneWatchAsync(channel.Id);
-            return;
-        }
+            case AloneWatchState.Keep:
+                return;
 
-        // Народу прибавилось — отсчёт продолжает идти, решение примет срабатывание
-        if (users.Count != 1)
-        {
-            return;
-        }
-
-        var userId = users.First().Id;
-
-        // Отсчёт про этого же одиночку уже идёт — сбрасывать его нечем
-        if (AloneWatches.TryGetValue(channel.Id, out var existing) && existing.UserId == userId)
-        {
-            return;
+            case AloneWatchState.Drop:
+                await DropAloneWatchAsync(channel.Id);
+                return;
         }
 
         // Сторож остался про другого — тот ушёл, и его вопрос уже ни о чём;
@@ -401,6 +465,46 @@ public static class VoiceStatusHandler
         {
             watch.Dispose();
         }
+    }
+
+    /// <summary>
+    /// Что делать со сторожем одиночества при изменении состава канала. Чистая функция —
+    /// вынесена для тестов. <paramref name="lonerId"/> осмыслен только при одном человеке
+    /// в канале, <paramref name="watchedUserId"/> — null, если сторожа нет.
+    /// </summary>
+    internal static AloneWatchState DecideWatch(int usersCount, ulong lonerId, ulong? watchedUserId)
+    {
+        // Канал опустел — сторожить некого
+        if (usersCount == 0)
+        {
+            return AloneWatchState.Drop;
+        }
+
+        // Народу прибавилось — отсчёт продолжает идти, решение примет срабатывание
+        if (usersCount != 1)
+        {
+            return AloneWatchState.Keep;
+        }
+
+        // Отсчёт про этого же одиночку уже идёт — сбрасывать его нечем
+        return watchedUserId == lonerId ? AloneWatchState.Keep : AloneWatchState.Restart;
+    }
+
+    /// <summary>
+    /// Что делать по срабатыванию сторожа одиночества. Чистая функция — вынесена
+    /// для тестов. <paramref name="asked"/> различает фазы: вопрос уже задан — значит
+    /// это второе срабатывание, и оно отключает.
+    /// </summary>
+    internal static AloneAlarm DecideAlarm(int usersCount, ulong lonerId, ulong watchedUserId, bool asked)
+    {
+        // Полчаса вышли, но человек уже не один (или один остался другой) —
+        // вопроса не будет, а следующий отсчёт заведёт новое одиночество
+        if (usersCount != 1 || lonerId != watchedUserId)
+        {
+            return AloneAlarm.Drop;
+        }
+
+        return asked ? AloneAlarm.Disconnect : AloneAlarm.Ask;
     }
 
     /// <summary>
@@ -424,18 +528,29 @@ public static class VoiceStatusHandler
     /// Возвращает false, если сторожа уже нет (сессия закрылась, бот перезапускался) —
     /// тогда кнопка просто устарела. Зовётся из обработчика кнопки.
     /// </summary>
-    internal static bool ConfirmAlone(ulong channelId, ulong userId)
+    internal static async Task<bool> ConfirmAloneAsync(ulong channelId, ulong userId)
     {
-        if (!AloneWatches.TryGetValue(channelId, out var watch) || watch.UserId != userId || !watch.Asked)
+        var confirmed = false;
+
+        // Под замком канала: колбэк сторожа, уже стартовавший к этому моменту, ждёт
+        // его же — иначе он успел бы прочитать сброшенный Asked и тут же задать вопрос
+        // заново (или, наоборот, отключить только что ответившего)
+        await UnderChannelLockAsync(channelId, () =>
         {
-            return false;
-        }
+            if (!AloneWatches.TryGetValue(channelId, out var watch) || watch.UserId != userId || !watch.Asked)
+            {
+                return Task.CompletedTask;
+            }
 
-        watch.Asked = false;
-        watch.Prompt = null;
-        watch.Timer?.Change(AloneCheckDelay, Timeout.InfiniteTimeSpan);
+            watch.Asked = false;
+            watch.Prompt = null;
+            watch.Timer?.Change(AloneCheckDelay, Timeout.InfiniteTimeSpan);
+            confirmed = true;
 
-        return true;
+            return Task.CompletedTask;
+        });
+
+        return confirmed;
     }
 
     /// <summary>
@@ -451,35 +566,27 @@ public static class VoiceStatusHandler
                 return;
             }
 
-            var semaphore = ChannelLocks.GetOrAdd(channelId, _ => new SemaphoreSlim(1, 1));
-            await semaphore.WaitAsync();
-
-            try
+            await UnderChannelLockAsync(channelId, async () =>
             {
                 // Под замком состав канала мог измениться, пока его ждали
                 var users = watch.Channel.ConnectedUsers;
+                var loner = users.Count == 1 ? users.First() : null;
 
-                // Полчаса вышли, но человек уже не один (или один остался другой) —
-                // вопроса не будет, а следующий отсчёт заведёт новое одиночество
-                if (users.Count != 1 || users.First().Id != watch.UserId)
+                switch (DecideAlarm(users.Count, loner?.Id ?? 0, watch.UserId, watch.Asked))
                 {
-                    await DropAloneWatchAsync(channelId);
-                    return;
-                }
+                    case AloneAlarm.Drop:
+                        await DropAloneWatchAsync(channelId);
+                        break;
 
-                if (watch.Asked)
-                {
-                    await DisconnectAloneAsync(channelId, watch, users.First());
+                    case AloneAlarm.Disconnect:
+                        await DisconnectAloneAsync(channelId, watch, loner!);
+                        break;
+
+                    case AloneAlarm.Ask:
+                        await AskAloneAsync(channelId, watch, loner!);
+                        break;
                 }
-                else
-                {
-                    await AskAloneAsync(channelId, watch, users.First());
-                }
-            }
-            finally
-            {
-                semaphore.Release();
-            }
+            });
         }
         catch (Exception ex)
         {
@@ -557,22 +664,26 @@ public static class VoiceStatusHandler
     private static IMessageChannel? GetTarget(ulong channelId) =>
         ChannelTargets.TryGetValue(channelId, out var target) ? target : null;
 
-    private static string Mention(SocketUser user) =>
-        user.Mention;
+    /// <summary>
+    /// Сколько идёт разговор в канале. Сессии нет — «0сек».
+    /// </summary>
+    private static string SessionDuration(ulong channelId) =>
+        ChannelTimers.TryGetValue(channelId, out var startTime)
+            ? FormatDuration(DateTime.UtcNow - startTime)
+            : "0сек";
 
-    private static string GetTimer(ulong channelId)
+    /// <summary>
+    /// Длительность человеку: «1ч 2мин 3сек». Часы считаются целиком, а не остатком
+    /// от суток: разговор длиннее суток редок, но существует, а «26ч» честнее «2ч».
+    /// </summary>
+    internal static string FormatDuration(TimeSpan elapsed)
     {
-        if (!ChannelTimers.TryGetValue(channelId, out var startTime))
-        {
-            return "0сек";
-        }
-
-        var elapsed = DateTime.UtcNow - startTime;
+        var hours = (int)elapsed.TotalHours;
         var parts = new List<string>();
 
-        if (elapsed.Hours > 0)
+        if (hours > 0)
         {
-            parts.Add($"{elapsed.Hours}ч");
+            parts.Add($"{hours}ч");
         }
 
         if (elapsed.Minutes > 0)

@@ -24,10 +24,17 @@ public class VoiceAloneButton : InteractionModuleBase<SocketInteractionContext>
             return;
         }
 
-        if (!ulong.TryParse(channelId, out var channel)
-            || !VoiceStatusHandler.ConfirmAlone(channel, Context.User.Id))
+        // Подтверждение идёт под замком канала, а тот может быть занят журналом —
+        // на ответ взаимодействию отпущено три секунды, поэтому сначала подтверждаем
+        // его получение, а решение принимаем следом
+        await DeferAsync();
+
+        var confirmed = ulong.TryParse(channelId, out var channel)
+            && await VoiceStatusHandler.ConfirmAloneAsync(channel, Context.User.Id);
+
+        if (!confirmed)
         {
-            await RespondAsync(embed: BotEmbeds.Warning(BotMessages.VoiceAloneStale()), ephemeral: true);
+            await FollowupAsync(embed: BotEmbeds.Warning(BotMessages.VoiceAloneStale()), ephemeral: true);
             return;
         }
 
@@ -35,7 +42,7 @@ public class VoiceAloneButton : InteractionModuleBase<SocketInteractionContext>
             Context.User.Username, channelId);
 
         // Правим само сообщение с кнопкой: вопрос снят, отвечать больше не на что
-        await ((IComponentInteraction)Context.Interaction).UpdateAsync(properties =>
+        await ModifyOriginalResponseAsync(properties =>
         {
             properties.Content = BotMessages.VoiceAloneConfirmed(Context.User.Mention);
             properties.Components = new ComponentBuilder().Build();
