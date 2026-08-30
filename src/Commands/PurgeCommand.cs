@@ -51,10 +51,15 @@ public class PurgeCommand : InteractionModuleBase<SocketInteractionContext>
             reply += "\n" + BotMessages.PurgeScanned(scanned.ToString());
 
             // Набрали меньше, чем просили: без этой строки пользователь решит, что бот
-            // удалил не всё по своей прихоти
-            if (deletable.Count < count && exhausted)
+            // удалил не всё по своей прихоти. Причины две, и они разные: либо история
+            // кончилась (или упёрлась в границу двух недель), либо мы сами перестали
+            // листать, дойдя до потолка просмотра — там имеет смысл повторить
+            if (deletable.Count < count)
             {
-                reply += "\n" + BotMessages.PurgeScanStopped(deletable.Count.ToString(), count.ToString());
+                reply += "\n" + (exhausted
+                    ? BotMessages.PurgeScanStopped(deletable.Count.ToString(), count.ToString())
+                    : BotMessages.PurgeScanLimit(deletable.Count.ToString(), count.ToString(), scanned.ToString()));
+
                 incomplete = true;
             }
         }
@@ -256,12 +261,15 @@ public class PurgeCommand : InteractionModuleBase<SocketInteractionContext>
             oldestSeen = page[^1].Id;
         }
 
-        return (collected, scanned, exhausted || collected.Count < count);
+        return (collected, scanned, exhausted);
     }
 
     /// <summary>
-    /// Удаляет пачку. false — не хватило прав: без обработки команда падала бы молча,
-    /// а пользователь видел бы «приложение не отвечает».
+    /// Удаляет пачку. false — не вышло, и об этом уже сказано пользователю.
+    /// Ловим весь HttpException, а не только отказ по правам: массовое удаление отвечает
+    /// ошибкой и на сообщение, перешагнувшее границу двух недель между выборкой
+    /// и удалением, и на удалённое кем-то параллельно. Без обработки команда падала бы
+    /// молча, а пользователь видел бы «приложение не отвечает».
     /// </summary>
     private async Task<bool> TryDeleteAsync(ITextChannel channel, IEnumerable<IMessage> messages)
     {
@@ -270,10 +278,15 @@ public class PurgeCommand : InteractionModuleBase<SocketInteractionContext>
             await channel.DeleteMessagesAsync(messages);
             return true;
         }
-        catch (Discord.Net.HttpException ex) when (ex.HttpCode == System.Net.HttpStatusCode.Forbidden)
+        catch (Discord.Net.HttpException ex)
         {
-            BotLogger.Warning("Удаление сообщений в #{Channel} запрещено: {Message}", channel.Name, ex.Message);
-            await FollowupAsync(embed: BotEmbeds.Error(BotMessages.PurgeNoPermission()), ephemeral: true);
+            BotLogger.Warning("Не удалось удалить сообщения в #{Channel}: {Message}", channel.Name, ex.Message);
+
+            var text = ex.HttpCode == System.Net.HttpStatusCode.Forbidden
+                ? BotMessages.PurgeNoPermission()
+                : BotMessages.PurgeFailed();
+
+            await FollowupAsync(embed: BotEmbeds.Error(text), ephemeral: true);
 
             return false;
         }

@@ -77,6 +77,11 @@ public static class FfmpegRunner
     internal static readonly string[] AllowedAudioFormats = ["mp3", "m4a", "opus", "ogg"];
 
     /// <summary>
+    /// Форматы без движения: результат — один кадр, и время к нему неприменимо.
+    /// </summary>
+    private static readonly string[] _stillFormats = ["png", "jpg", "webp"];
+
+    /// <summary>
     /// План операции. Все поля необязательны: чего нет — того не делаем.
     /// Crop задаётся в пикселях исходника, поэтому модели заранее сообщают его размеры.
     /// </summary>
@@ -206,7 +211,7 @@ public static class FfmpegRunner
         var arguments = BuildArguments(plan, info, format, inputPath, outputPath, limits);
         var result = await ExecuteAsync(workspace, arguments, outputPath, displayName, format);
 
-        return result with { TruncatedSeconds = TruncatedBy(plan, info, caps) };
+        return result with { TruncatedSeconds = TruncatedBy(plan, info, caps, format) };
     }
 
     /// <summary>
@@ -214,9 +219,11 @@ public static class FfmpegRunner
     /// 0 — не урезал или обрезку задал сам пользователь: про свой же отрезок ему говорить
     /// нечего, а вот молча потерянный хвост восьмиминутного видео выглядит поломкой.
     /// </summary>
-    private static double TruncatedBy(MediaPlan plan, MediaInfo info, MediaLimits caps)
+    private static double TruncatedBy(MediaPlan plan, MediaInfo info, MediaLimits caps, string format)
     {
-        if (plan.Start.HasValue || plan.End.HasValue || info.DurationSeconds <= 0)
+        // У неподвижного результата длительности нет вовсе: из видео берётся один кадр,
+        // и говорить «взял только первые пять минут» про скриншот бессмысленно
+        if (_stillFormats.Contains(format) || plan.Start.HasValue || plan.End.HasValue || info.DurationSeconds <= 0)
         {
             return 0;
         }

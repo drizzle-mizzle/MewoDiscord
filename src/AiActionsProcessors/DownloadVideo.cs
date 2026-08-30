@@ -66,10 +66,6 @@ public static partial class DownloadVideo
             return;
         }
 
-        // Разведка YouTube и разбор просьбы занимают секунды, и всё это время
-        // пользователь должен видеть, что бот занят его просьбой
-        using var typing = message.Channel.EnterTypingState();
-
         await ProcessAsync(context, videoId);
     }
 
@@ -79,6 +75,11 @@ public static partial class DownloadVideo
     {
         var message = context.Message;
         var clock = Stopwatch.StartNew();
+
+        // Индикатор набора на всю операцию, включая разведку: до неё пользователь
+        // не видел ничего, а разведка YouTube занимает секунды. Состояние одно на всё —
+        // двух параллельных циклов набора быть не должно
+        using var typing = message.Channel.EnterTypingState();
 
         var (meta, failure) = await YtDlpRunner.ProbeAsync(videoId);
 
@@ -197,8 +198,9 @@ public static partial class DownloadVideo
         IUserMessage? progress)
     {
         var message = context.Message;
-        using var typing = message.Channel.EnterTypingState();
 
+        // Индикатор набора уже держит вызывающий: второй цикл шлёт то же самое
+        // впустую, только чаще
         var hardCap = (long)AppConfig.MediaSettings.MaxSourceMb * 1024 * 1024;
         var (source, failure) = await YtDlpRunner.DownloadAsync(videoId, choice, workspace, section, hardCap);
 

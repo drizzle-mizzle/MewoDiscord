@@ -253,6 +253,14 @@ public static class ChatGptSessionStore
                 return;
             }
 
+            // Индекс есть, но не дал ни одной записи — скорее всего он побился, а не все
+            // сессии разом кончились. Сносить по такому поводу все состояния нельзя:
+            // индекс восстановится с ближайшим Rebind, а история — уже никогда
+            if (_sessions.Count == 0)
+            {
+                return;
+            }
+
             var orphans = Directory.GetFiles(StateDirectory, "*.json")
                 .Where(path => !_sessions.ContainsKey(Path.GetFileNameWithoutExtension(path)))
                 .ToList();

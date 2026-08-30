@@ -112,6 +112,12 @@ public static class BotMessages
     public static string PurgeScanStopped(string found, string requested) =>
         Format(nameof(PurgeScanStopped), ("{found}", found), ("{requested}", requested));
 
+    public static string PurgeScanLimit(string found, string requested, string scanned) =>
+        Format(nameof(PurgeScanLimit), ("{found}", found), ("{requested}", requested), ("{scanned}", scanned));
+
+    public static string PurgeFailed() =>
+        Format(nameof(PurgeFailed));
+
     public static string PurgePeriodClamped() =>
         Format(nameof(PurgePeriodClamped));
 

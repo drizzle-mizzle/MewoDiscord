@@ -431,20 +431,19 @@ public static partial class ChatGptSessionHandler
 
             try
             {
+                // Размер здесь заранее неизвестен (хост чужой), поэтому потолок держит
+                // сам клиент: сверх него скачивание обрывается исключением
                 var content = await _http.GetByteArrayAsync(url);
-
-                if (content.Length > ChatGptClient.MaxInputFileBytes)
-                {
-                    notes.Add("[картинка по ссылке пропущена: превышен лимит размера]");
-                    continue;
-                }
 
                 files.Add(new ChatGptClient.InputFile(DiscordLimits.FileNameFromUrl(url, "image.png"), content));
             }
+            catch (HttpRequestException ex) when (ex.HttpRequestError == HttpRequestError.ConfigurationLimitExceeded)
+            {
+                BotLogger.Warning("ChatGPT: картинка по ссылке {Url} больше лимита", url);
+                notes.Add("[картинка по ссылке пропущена: превышен лимит размера]");
+            }
             catch (Exception ex)
             {
-                // Сюда же приходит превышение потолка буфера — для пользователя это
-                // такая же «не скачалась», и в запрос уйдёт пометка
                 BotLogger.Warning("ChatGPT: не удалось скачать картинку из embed'а {Url}: {Message}", url, ex.Message);
                 notes.Add("[картинку по ссылке не удалось скачать]");
             }

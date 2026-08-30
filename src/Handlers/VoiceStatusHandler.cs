@@ -132,11 +132,14 @@ public static class VoiceStatusHandler
         // Только сигнал: вотчер работает в своём цикле, журнал его не ждёт
         ChannelRenameWatcher.NotifyChannelChanged(channel);
 
-        // Сессии ещё нет — заводим. Признак именно такой, а не «зашёл первый»:
-        // кэш Discord к моменту обработки уже знает обо всех, кто зашёл, и два
-        // почти одновременных захода в пустой канал оба увидели бы двоих —
-        // сессия не завелась бы вовсе
-        if (!_channelTimers.ContainsKey(channel.Id))
+        // Сессии ещё нет — заводим. Одного «зашёл первый» мало: кэш Discord к моменту
+        // обработки уже знает обо всех, кто зашёл, и два почти одновременных захода
+        // в пустой канал оба увидели бы двоих — сессия не завелась бы вовсе.
+        // Но и одного «записи нет» мало: потерянное на переподключении gateway событие
+        // ухода оставляет запись навсегда, и канал молчал бы до перезапуска бота.
+        // Поэтому годится любое из двух: записи нет или человек в канале ровно один
+        // (значит до него там никого не было, что бы ни думала наша запись)
+        if (!_channelTimers.ContainsKey(channel.Id) || channel.ConnectedUsers.Count == 1)
         {
             _channelTimers[channel.Id] = DateTime.UtcNow;
             _channelVoices[channel.Id] = channel;
@@ -457,7 +460,7 @@ public static class VoiceStatusHandler
         await DropAloneWatchAsync(channel.Id);
 
         var watch = new AloneWatch(channel, userId);
-        watch.Timer = new Timer(_ => _ = OnAloneTimerAsync(channel.Id), null,
+        watch.Timer = new Timer(_ => _ = OnAloneTimerAsync(channel.Id, watch), null,
             _aloneCheckDelay, Timeout.InfiniteTimeSpan);
 
         // Кто-то успел завести свой, пока мы создавали этот, — лишний выбрасываем
@@ -555,20 +558,26 @@ public static class VoiceStatusHandler
 
     /// <summary>
     /// Единственный колбэк сторожа: первое срабатывание спрашивает, второе — отключает.
+    /// Сторож приходит параметром, а не берётся из словаря: колбэк принадлежит именно
+    /// этому отсчёту, и работать он должен только за него.
     /// Исключение отсюда некому поймать, поэтому гасим на месте.
     /// </summary>
-    private static async Task OnAloneTimerAsync(ulong channelId)
+    private static async Task OnAloneTimerAsync(ulong channelId, AloneWatch watch)
     {
         try
         {
-            if (!_aloneWatches.TryGetValue(channelId, out var watch))
-            {
-                return;
-            }
-
             await UnderChannelLockAsync(channelId, async () =>
             {
-                // Под замком состав канала мог измениться, пока его ждали
+                // Сторож сверяется под замком, и именно тот, чей таймер сработал: пока
+                // ждали замок, одиночка мог смениться, а вместе с ним и сторож. Решать
+                // за чужой нельзя — иначе колбэк снял бы только что заведённый чужой
+                // отсчёт, а в худшем случае отключил бы человека, которого в этот раз
+                // никто ни о чём не спрашивал
+                if (!_aloneWatches.TryGetValue(channelId, out var current) || !ReferenceEquals(current, watch))
+                {
+                    return;
+                }
+
                 var users = watch.Channel.ConnectedUsers;
                 var loner = users.Count == 1 ? users.First() : null;
 

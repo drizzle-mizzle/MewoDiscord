@@ -225,6 +225,22 @@ public class ChatGptSessionStoreTests : IDisposable
     }
 
     [Fact]
+    public void Gpt_БитыйИндексНеСноситСостоянияСессий()
+    {
+        var entry = ChatGptSessionStore.Create(1, 2, 100);
+        var statePath = Path.Combine(_stateDirectory, "chatgpt_sessions", entry.Id + ".json");
+
+        // Индекс есть, но не читается: истории при этом целы, и терять их нельзя —
+        // индекс восстановится с ближайшим Rebind, а история уже никогда
+        File.WriteAllLines(Path.Combine(_stateDirectory, "chatgpt_sessions.txt"), ["мусор"]);
+
+        ChatGptSessionStore.Load();
+
+        Assert.Empty(ChatGptSessionStore.All());
+        Assert.True(File.Exists(statePath));
+    }
+
+    [Fact]
     public void Gpt_ОсиротевшиеСостоянияУдаляютсяПриЗагрузке()
     {
         ChatGptSessionStore.Create(1, 2, 100);
