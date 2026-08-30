@@ -8,6 +8,6 @@ remote-management:
   allow-remote: false
   secret-key: ""
 
-# Management API (нужен боту для /chatgpt login) включается переменной MANAGEMENT_PASSWORD
+# Management API (нужен боту для /chatgpt-auth login) включается переменной MANAGEMENT_PASSWORD
 # из cliproxy/management.env — см. management.example.env. Ключ remote-management.secret-key
 # здесь не заполнять: в yaml ожидается bcrypt-хэш, а не пароль.
