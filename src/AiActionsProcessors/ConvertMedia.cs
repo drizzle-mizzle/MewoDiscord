@@ -501,7 +501,11 @@ public static class ConvertMedia
     {
         try
         {
-            using var response = await Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+            // Таймаут клиента кончается на заголовках: тело мы читаем сами, и замолчавший
+            // сервер держал бы это чтение бесконечно, а с ним и слот медиа
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(DownloadTimeoutSeconds));
+
+            using var response = await Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cts.Token);
             response.EnsureSuccessStatusCode();
 
             if (response.Content.Headers.ContentLength > maxBytes)
@@ -509,14 +513,14 @@ public static class ConvertMedia
                 return false;
             }
 
-            await using var source = await response.Content.ReadAsStreamAsync();
+            await using var source = await response.Content.ReadAsStreamAsync(cts.Token);
             await using var target = File.Create(path);
 
             var buffer = new byte[81920];
             var total = 0L;
             int read;
 
-            while ((read = await source.ReadAsync(buffer)) > 0)
+            while ((read = await source.ReadAsync(buffer, cts.Token)) > 0)
             {
                 total += read;
 

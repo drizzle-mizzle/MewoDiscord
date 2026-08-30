@@ -1,18 +1,27 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Net;
 using System.Text.RegularExpressions;
+using AngleSharp.Dom;
+using AngleSharp.Html.Parser;
 using MewoDiscord.Helpers;
 
 namespace MewoDiscord.Utils;
 
 /// <summary>
 /// Чтение публичных постов Telegram через виджет-страницу «t.me/канал/пост?embed=1».
-/// Bot API отдаёт только каналы, куда добавлен бот, поэтому разбираем HTML виджета.
+/// Bot API отдаёт только каналы, куда добавлен бот, поэтому разбираем HTML виджета
+/// селекторами: разметку Telegram меняет без предупреждения, а регулярка вдобавок
+/// зависела от порядка атрибутов в теге и ломалась молча.
 /// Работает лишь с публичными каналами: приватные ссылки вида t.me/c/... не поддерживаются.
 /// </summary>
 public static partial class TelegramPostClient
 {
     private const string EmbedUrlFormat = "https://t.me/{0}/{1}?embed=1";
+
+    /// <summary>
+    /// Разборщик HTML. Состояния не держит, поэтому одного хватает на всех.
+    /// </summary>
+    private static readonly HtmlParser _parser = new();
     private const string PostUrlFormat = "https://t.me/{0}/{1}";
 
     /// <summary>
@@ -31,7 +40,17 @@ public static partial class TelegramPostClient
         try
         {
             var html = await SocialMediaHttp.Http.GetStringAsync(url);
-            return ParsePost(html);
+            var post = ParsePost(html);
+
+            // Страница пришла, а разобрать не вышло — скорее всего Telegram сменил вёрстку
+            // виджета. Молчание тут неотличимо от «не увидел ссылку», и причину искали бы
+            // в поиске ссылок, а не в разборе
+            if (post == null && !string.IsNullOrWhiteSpace(html))
+            {
+                BotLogger.Warning("Пост Telegram {Url} не разобрался: вёрстка виджета изменилась?", url);
+            }
+
+            return post;
         }
         catch (Exception ex)
         {
@@ -50,18 +69,33 @@ public static partial class TelegramPostClient
             return null;
         }
 
+        var document = _parser.ParseDocument(html);
+
         var media = new List<SocialMedia>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        var thumbnail = FirstGroup(VideoThumbRegex(), html);
+        var thumbnail = BackgroundUrl(document.QuerySelector(".tgme_widget_message_video_thumb"));
 
-        foreach (Match match in VideoRegex().Matches(html))
+        // Видео, не заполняющее плеер (вертикальное), Telegram кладёт на размытую подложку —
+        // копию того же файла с классом js-message_video_blured. Это оформление, а не второй
+        // файл: без отсечки такое видео уезжало в Discord дважды
+        foreach (var video in document.QuerySelectorAll("video[src]:not(.js-message_video_blured)"))
         {
-            AddMedia(media, seen, new SocialMedia(WebUtility.HtmlDecode(match.Groups[1].Value), IsVideo: true, thumbnail));
+            var source = video.GetAttribute("src");
+
+            if (!string.IsNullOrWhiteSpace(source))
+            {
+                AddMedia(media, seen, new SocialMedia(source, IsVideo: true, thumbnail));
+            }
         }
 
-        foreach (Match match in PhotoRegex().Matches(html))
+        foreach (var photo in document.QuerySelectorAll(".tgme_widget_message_photo_wrap"))
         {
-            AddMedia(media, seen, new SocialMedia(WebUtility.HtmlDecode(match.Groups[1].Value), IsVideo: false, ThumbnailUrl: null));
+            var source = BackgroundUrl(photo);
+
+            if (source != null)
+            {
+                AddMedia(media, seen, new SocialMedia(source, IsVideo: false, ThumbnailUrl: null));
+            }
         }
 
         // Видео без прямой ссылки (длинное или защищённое) — остаётся только превью
@@ -70,31 +104,32 @@ public static partial class TelegramPostClient
             media.Add(new SocialMedia(thumbnail, IsVideo: false, thumbnail));
         }
 
-        var channelName = FirstGroup(OwnerNameRegex(), html);
-        var caption = ExtractCaption(html);
+        var owner = document.QuerySelector("a.tgme_widget_message_owner_name");
+        var channelName = Trimmed(owner?.TextContent);
+        var caption = ExtractCaption(document);
 
         if (media.Count == 0 && caption == null)
         {
             return null;
         }
 
-        var channel = FirstGroup(OwnerLinkRegex(), html);
+        var channel = ExtractLogin(owner?.GetAttribute("href"));
 
         return new SocialPost(
             channelName,
             channel == null ? null : $"@{channel}",
             caption,
             media,
-            ReadDate(html));
+            ReadDate(document));
     }
 
     /// <summary>
     /// Время публикации. Не нашли или не разобрали — обойдёмся без даты: в подписи
     /// её просто не будет.
     /// </summary>
-    private static DateTimeOffset? ReadDate(string html)
+    private static DateTimeOffset? ReadDate(IDocument document)
     {
-        var raw = FirstGroup(MessageDateRegex(), html);
+        var raw = document.QuerySelector(".tgme_widget_message_date time")?.GetAttribute("datetime");
 
         return raw != null && DateTimeOffset.TryParse(
             raw, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal, out var date)
@@ -103,8 +138,49 @@ public static partial class TelegramPostClient
     }
 
     /// <summary>
+    /// Адрес из инлайнового background-image: виджет пишет его как url('…').
+    /// Отдельного атрибута с адресом у фотографий и превью нет.
+    /// </summary>
+    private static string? BackgroundUrl(IElement? element)
+    {
+        var style = element?.GetAttribute("style");
+        var start = style?.IndexOf("url('", StringComparison.OrdinalIgnoreCase) ?? -1;
+
+        if (start < 0)
+        {
+            return null;
+        }
+
+        start += 5;
+        var end = style!.IndexOf('\'', start);
+
+        return end > start ? style[start..end] : null;
+    }
+
+    /// <summary>
+    /// Логин канала из ссылки на него же: в имени он не написан, а подписью нашей ссылки
+    /// идёт именно логин.
+    /// </summary>
+    private static string? ExtractLogin(string? href)
+    {
+        const string prefix = "https://t.me/";
+
+        if (href == null || !href.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var rest = href[prefix.Length..];
+        var end = rest.IndexOfAny(['/', '?', '#']);
+        var login = end < 0 ? rest : rest[..end];
+
+        return login.Length > 0 && login.All(c => char.IsAsciiLetterOrDigit(c) || c == '_') ? login : null;
+    }
+
+    /// <summary>
     /// Кладёт файл в список, пропуская повтор по адресу: один и тот же файл дважды
-    /// в посте — это дубль вёрстки, а не второе вложение.
+    /// в посте — это дубль вёрстки, а не второе вложение. Страховка на случай, если
+    /// Telegram переименует класс размытой подложки.
     /// </summary>
     private static void AddMedia(List<SocialMedia> media, HashSet<string> seen, SocialMedia item)
     {
@@ -115,11 +191,12 @@ public static partial class TelegramPostClient
     }
 
     /// <summary>
-    /// Достаёт текст поста, разворачивая переносы строк и HTML-сущности.
+    /// Достаёт текст поста, разворачивая переносы строк и HTML-сущности. Разметку внутри
+    /// берём сырой: br превращается в перенос, остальные теги выбрасываются.
     /// </summary>
-    private static string? ExtractCaption(string html)
+    private static string? ExtractCaption(IDocument document)
     {
-        var raw = FirstGroup(CaptionRegex(), html);
+        var raw = document.QuerySelector(".tgme_widget_message_text.js-message_text")?.InnerHtml;
 
         if (raw == null)
         {
@@ -133,52 +210,16 @@ public static partial class TelegramPostClient
         return text.Length > 0 ? text : null;
     }
 
-    private static string? FirstGroup(Regex regex, string input)
+    private static string? Trimmed(string? value)
     {
-        var match = regex.Match(input);
-        return match.Success ? WebUtility.HtmlDecode(match.Groups[1].Value).Trim() : null;
+        var text = value?.Trim();
+
+        return string.IsNullOrEmpty(text) ? null : text;
     }
-
-    #region Регулярки разбора виджета
-
-    /// <summary>
-    /// Видео, не заполняющее плеер (вертикальное), Telegram кладёт на размытую подложку —
-    /// копию того же файла с классом js-message_video_blured. Это оформление, а не второй
-    /// файл: без отсечки такое видео уезжало в Discord дважды.
-    /// </summary>
-    [GeneratedRegex(@"<video(?![^>]*js-message_video_blured)[^>]+src=""([^""]+)""", RegexOptions.IgnoreCase)]
-    private static partial Regex VideoRegex();
-
-    [GeneratedRegex(@"tgme_widget_message_photo_wrap[^""]*""[^>]*background-image:\s*url\('([^']+)'\)", RegexOptions.IgnoreCase)]
-    private static partial Regex PhotoRegex();
-
-    [GeneratedRegex(@"tgme_widget_message_video_thumb[^""]*""[^>]*background-image:\s*url\('([^']+)'\)", RegexOptions.IgnoreCase)]
-    private static partial Regex VideoThumbRegex();
-
-    [GeneratedRegex(@"<div class=""tgme_widget_message_text[^""]*js-message_text[^""]*""[^>]*>(.*?)</div>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
-    private static partial Regex CaptionRegex();
-
-    [GeneratedRegex(@"tgme_widget_message_owner_name""[^>]*>\s*(?:<span[^>]*>)?([^<]+)", RegexOptions.IgnoreCase)]
-    private static partial Regex OwnerNameRegex();
-
-    /// <summary>
-    /// Логин канала берём из ссылки на него же: в имени он не написан, а подписью
-    /// нашей ссылки идёт именно логин.
-    /// </summary>
-    [GeneratedRegex(@"tgme_widget_message_owner_name""[^>]*href=""https://t\.me/([A-Za-z0-9_]+)""", RegexOptions.IgnoreCase)]
-    private static partial Regex OwnerLinkRegex();
-
-    /// <summary>
-    /// Дату виджет кладёт атрибутом datetime в элемент времени внутри ссылки на пост.
-    /// </summary>
-    [GeneratedRegex(@"tgme_widget_message_date[^>]*>\s*<time[^>]*datetime=""([^""]+)""", RegexOptions.IgnoreCase)]
-    private static partial Regex MessageDateRegex();
 
     [GeneratedRegex(@"<br\s*/?>", RegexOptions.IgnoreCase)]
     private static partial Regex LineBreakRegex();
 
     [GeneratedRegex(@"<[^>]+>")]
     private static partial Regex TagRegex();
-
-    #endregion
 }

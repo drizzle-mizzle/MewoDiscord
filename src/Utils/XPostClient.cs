@@ -201,20 +201,27 @@ public static class XPostClient
     /// поэтому размер спрашиваем у CDN. Не влезло ничего — оставляем худший вариант:
     /// про него честно скажут «файл не влез», и это лучше молчания.
     /// </summary>
-    internal static async Task<SocialPost> PickQualityAsync(LadderPost post, ulong maxBytes)
+    /// <param name="probeSize">
+    /// Чем узнавать размер варианта. Подменяется в тестах: сам выбор — чистое решение,
+    /// и проверять его без сети можно только так.
+    /// </param>
+    internal static async Task<SocialPost> PickQualityAsync(
+        LadderPost post,
+        ulong maxBytes,
+        Func<string, Task<long?>>? probeSize = null)
     {
         var media = new List<SocialMedia>();
 
         foreach (var ladder in post.Media)
         {
-            var url = await PickVariantAsync(ladder, maxBytes);
+            var url = await PickVariantAsync(ladder, maxBytes, probeSize ?? SocialMediaHttp.TryGetSizeAsync);
             media.Add(new SocialMedia(url, ladder.IsVideo, ladder.ThumbnailUrl));
         }
 
         return new SocialPost(post.AuthorName, post.AuthorHandle, post.Caption, media, post.PublishedAt);
     }
 
-    private static async Task<string> PickVariantAsync(MediaLadder ladder, ulong maxBytes)
+    private static async Task<string> PickVariantAsync(MediaLadder ladder, ulong maxBytes, Func<string, Task<long?>> probeSize)
     {
         if (ladder.Variants.Count == 1)
         {
@@ -223,7 +230,7 @@ public static class XPostClient
 
         foreach (var variant in ladder.Variants)
         {
-            var size = await SocialMediaHttp.TryGetSizeAsync(variant);
+            var size = await probeSize(variant);
 
             // Размера не назвали — берём как есть: скачивание всё равно оборвётся по потолку
             if (size == null || size <= (long)maxBytes)

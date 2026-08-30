@@ -1,4 +1,4 @@
-using MewoDiscord.Handlers;
+﻿using MewoDiscord.Handlers;
 using MewoDiscord.Utils;
 
 namespace MewoDiscord.Tests;
@@ -6,8 +6,8 @@ namespace MewoDiscord.Tests;
 /// <summary>
 /// Тесты разбора ответов X и поиска ссылок. Автономны: сеть не нужна, JSON взят фикстурами
 /// по форме настоящих ответов — штатной ручки «tweet-result» и запасной читалки.
-/// Выбор качества (<see cref="XPostClient.PickQualityAsync"/>) здесь проверяется только там,
-/// где вариант один: с лесенкой он спрашивает размеры у CDN, а тесты в сеть не ходят.
+/// Выбор качества (<see cref="XPostClient.PickQualityAsync"/>) тоже проверяется здесь:
+/// размеры вариантов ему передаются подставным опросчиком, и в CDN он не ходит.
 /// </summary>
 public class XPostTests
 {
@@ -198,6 +198,58 @@ public class XPostTests
         var media = Assert.Single(post.Media);
         Assert.True(media.IsVideo);
         Assert.Equal("https://video.twimg.com/tweet_video/HQVmd6lWgAAEQGr.mp4", media.Url);
+    }
+
+    [Fact]
+    public async Task X_ИзЛесенкиБерётсяЛучшееВлезающее()
+    {
+        var ladder = XPostClient.ParsePost(VideoPostJson);
+
+        Assert.NotNull(ladder);
+
+        // Размеры вариантов: лучший не влезает, средний влезает
+        var sizes = new Dictionary<string, long?>
+        {
+            ["https://video.twimg.com/vid/1280x720/high.mp4"] = 60L * 1024 * 1024,
+            ["https://video.twimg.com/vid/640x360/mid.mp4"] = 20L * 1024 * 1024,
+            ["https://video.twimg.com/vid/480x270/low.mp4"] = 5L * 1024 * 1024
+        };
+
+        var post = await XPostClient.PickQualityAsync(
+            ladder, maxBytes: 50 * 1024 * 1024, url => Task.FromResult(sizes[url]));
+
+        var media = Assert.Single(post.Media);
+        Assert.Equal("https://video.twimg.com/vid/640x360/mid.mp4", media.Url);
+    }
+
+    [Fact]
+    public async Task X_НеВлезлоНичего_ОстаётсяХудшийВариант()
+    {
+        var ladder = XPostClient.ParsePost(VideoPostJson);
+
+        Assert.NotNull(ladder);
+
+        // Про худший честно скажут «файл не влез» — это лучше молчания
+        var post = await XPostClient.PickQualityAsync(
+            ladder, maxBytes: 1024, _ => Task.FromResult<long?>(60L * 1024 * 1024));
+
+        var media = Assert.Single(post.Media);
+        Assert.Equal("https://video.twimg.com/vid/480x270/low.mp4", media.Url);
+    }
+
+    [Fact]
+    public async Task X_РазмерНеНазвали_БерётсяЛучшийВариант()
+    {
+        var ladder = XPostClient.ParsePost(VideoPostJson);
+
+        Assert.NotNull(ladder);
+
+        // Скачивание всё равно оборвётся по потолку, а лишний вариант качать незачем
+        var post = await XPostClient.PickQualityAsync(
+            ladder, maxBytes: 1024, _ => Task.FromResult<long?>(null));
+
+        var media = Assert.Single(post.Media);
+        Assert.Equal("https://video.twimg.com/vid/1280x720/high.mp4", media.Url);
     }
 
     [Fact]

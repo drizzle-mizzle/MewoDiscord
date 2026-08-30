@@ -422,6 +422,13 @@ public static partial class ChatGptSessionHandler
         // её embed'ом, а сам файл лежит на чужом хосте
         foreach (var url in CollectEmbedImageUrls(message))
         {
+            // Адрес пришёл из ссылки в чужом сообщении, а не от Discord: туда же,
+            // куда и медиа соцсетей, ходим только по проверенному адресу
+            if (!SocialMediaHttp.IsSafeUrl(url))
+            {
+                continue;
+            }
+
             try
             {
                 var content = await Http.GetByteArrayAsync(url);

@@ -40,6 +40,12 @@ public static partial class PostMediaHandler
     private const ulong FallbackUploadLimit = 10 * 1024 * 1024;
 
     /// <summary>
+    /// Сколько постов обрабатываем одновременно. Работа фоновая и незаказанная —
+    /// пусть ждёт, а не соревнуется за память и канал с остальным ботом.
+    /// </summary>
+    private static readonly SemaphoreSlim _slots = new(2, 2);
+
+    /// <summary>
     /// Оформление ответа: у каждого источника своя акцентная полоса, подпись, иконка
     /// и текст про невлезший файл.
     /// </summary>
@@ -65,24 +71,37 @@ public static partial class PostMediaHandler
 
         _ = Task.Run(async () =>
         {
-            var replied = false;
+            // Обработка идёт на любое сообщение со ссылкой, без всякой просьбы, и каждая
+            // держит в памяти скачанные файлы: без общего потолка десяток ссылок подряд
+            // множит эти буферы линейно. Очередь тут уместна — ждать своей очереди
+            // секунды никому не мешает
+            await _slots.WaitAsync();
 
-            foreach (var request in requests)
+            try
             {
-                try
+                var replied = false;
+
+                foreach (var request in requests)
                 {
-                    replied |= await HandleRequestAsync(message, request, style);
+                    try
+                    {
+                        replied |= await HandleRequestAsync(message, request, style);
+                    }
+                    catch (Exception ex)
+                    {
+                        BotLogger.Error("Ошибка обработки ссылки {Url}: {Message}", request.Url, ex.Message);
+                    }
                 }
-                catch (Exception ex)
+
+                // Своё оформление показали — стандартное превью Discord больше не нужно
+                if (replied)
                 {
-                    BotLogger.Error("Ошибка обработки ссылки {Url}: {Message}", request.Url, ex.Message);
+                    await SuppressSourceEmbedsAsync(message);
                 }
             }
-
-            // Своё оформление показали — стандартное превью Discord больше не нужно
-            if (replied)
+            finally
             {
-                await SuppressSourceEmbedsAsync(message);
+                _slots.Release();
             }
         });
     }
