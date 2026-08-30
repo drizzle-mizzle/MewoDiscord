@@ -2,47 +2,85 @@ namespace MewoDiscord.Helpers;
 
 public static class BotMessages
 {
-    public static string VoiceConversationStarted(string channel) =>
-        Format(nameof(VoiceConversationStarted), ("{channel}", channel));
+    public static string VoiceSessionDuration(string timer) =>
+        Format(nameof(VoiceSessionDuration), ("{timer}", timer));
 
-    public static string VoiceConversationEnded(string channel, string timer) =>
-        Format(nameof(VoiceConversationEnded), ("{channel}", channel), ("{timer}", timer));
+    public static string VoiceConversationStarted() =>
+        Format(nameof(VoiceConversationStarted));
 
-    public static string VoiceUserJoined(string user, string channel, string timer) =>
-        Format(nameof(VoiceUserJoined), ("{user}", user), ("{channel}", channel), ("{timer}", timer));
+    public static string VoiceConversationEnded(string channel) =>
+        Format(nameof(VoiceConversationEnded), ("{channel}", channel));
 
-    public static string VoiceUserLeft(string user, string channel, string timer) =>
-        Format(nameof(VoiceUserLeft), ("{user}", user), ("{channel}", channel), ("{timer}", timer));
+    public static string VoiceUserJoined(string user, string channel) =>
+        Format(nameof(VoiceUserJoined), ("{user}", user), ("{channel}", channel));
 
-    public static string VoiceUserMuted(string user, string channel, string timer) =>
-        Format(nameof(VoiceUserMuted), ("{user}", user), ("{channel}", channel), ("{timer}", timer));
+    public static string VoiceUserLeft(string user, string channel) =>
+        Format(nameof(VoiceUserLeft), ("{user}", user), ("{channel}", channel));
 
-    public static string VoiceUserUnmuted(string user, string channel, string timer) =>
-        Format(nameof(VoiceUserUnmuted), ("{user}", user), ("{channel}", channel), ("{timer}", timer));
+    public static string VoiceUserKicked(string bot, string user) =>
+        Format(nameof(VoiceUserKicked), ("{bot}", bot), ("{user}", user));
 
-    public static string VoiceUserServerMuted(string user, string channel, string timer) =>
-        Format(nameof(VoiceUserServerMuted), ("{user}", user), ("{channel}", channel), ("{timer}", timer));
+    public static string VoiceUserMuted(string user) =>
+        Format(nameof(VoiceUserMuted), ("{user}", user));
 
-    public static string VoiceUserServerUnmuted(string user, string channel, string timer) =>
-        Format(nameof(VoiceUserServerUnmuted), ("{user}", user), ("{channel}", channel), ("{timer}", timer));
+    public static string VoiceUserUnmuted(string user) =>
+        Format(nameof(VoiceUserUnmuted), ("{user}", user));
 
-    public static string VoiceUserDeafened(string user, string channel, string timer) =>
-        Format(nameof(VoiceUserDeafened), ("{user}", user), ("{channel}", channel), ("{timer}", timer));
+    public static string VoiceUserServerMuted(string user) =>
+        Format(nameof(VoiceUserServerMuted), ("{user}", user));
 
-    public static string VoiceUserUndeafened(string user, string channel, string timer) =>
-        Format(nameof(VoiceUserUndeafened), ("{user}", user), ("{channel}", channel), ("{timer}", timer));
+    public static string VoiceUserServerUnmuted(string user) =>
+        Format(nameof(VoiceUserServerUnmuted), ("{user}", user));
 
-    public static string VoiceUserServerDeafened(string user, string channel, string timer) =>
-        Format(nameof(VoiceUserServerDeafened), ("{user}", user), ("{channel}", channel), ("{timer}", timer));
+    public static string VoiceUserDeafened(string user) =>
+        Format(nameof(VoiceUserDeafened), ("{user}", user));
 
-    public static string VoiceUserServerUndeafened(string user, string channel, string timer) =>
-        Format(nameof(VoiceUserServerUndeafened), ("{user}", user), ("{channel}", channel), ("{timer}", timer));
+    public static string VoiceUserUndeafened(string user) =>
+        Format(nameof(VoiceUserUndeafened), ("{user}", user));
 
-    public static string VoiceUserStartedStream(string user, string channel, string timer) =>
-        Format(nameof(VoiceUserStartedStream), ("{user}", user), ("{channel}", channel), ("{timer}", timer));
+    public static string VoiceUserServerDeafened(string user) =>
+        Format(nameof(VoiceUserServerDeafened), ("{user}", user));
 
-    public static string VoiceUserStoppedStream(string user, string channel, string timer) =>
-        Format(nameof(VoiceUserStoppedStream), ("{user}", user), ("{channel}", channel), ("{timer}", timer));
+    public static string VoiceUserServerUndeafened(string user) =>
+        Format(nameof(VoiceUserServerUndeafened), ("{user}", user));
+
+    public static string VoiceUserStartedStream(string user) =>
+        Format(nameof(VoiceUserStartedStream), ("{user}", user));
+
+    public static string VoiceUserStoppedStream(string user) =>
+        Format(nameof(VoiceUserStoppedStream), ("{user}", user));
+
+    // Те же события для общего чата: там нет ни треда, ни таймера сессии — зато нужен канал
+
+    public static string VoiceCommonWithLink(string text, string link) =>
+        Format(nameof(VoiceCommonWithLink), ("{text}", text), ("{link}", link));
+
+    public static string VoiceConversationStartedCommon(string channel) =>
+        Format(nameof(VoiceConversationStartedCommon), ("{channel}", channel));
+
+    public static string VoiceConversationEndedCommon(string channel) =>
+        Format(nameof(VoiceConversationEndedCommon), ("{channel}", channel));
+
+    public static string VoiceUserStartedStreamCommon(string user, string channel) =>
+        Format(nameof(VoiceUserStartedStreamCommon), ("{user}", user), ("{channel}", channel));
+
+    public static string VoiceAloneCheck(string user) =>
+        Format(nameof(VoiceAloneCheck), ("{user}", user));
+
+    public static string VoiceAloneButton() =>
+        Format(nameof(VoiceAloneButton));
+
+    public static string VoiceAloneConfirmed(string user) =>
+        Format(nameof(VoiceAloneConfirmed), ("{user}", user));
+
+    public static string VoiceAloneNoAnswer(string user) =>
+        Format(nameof(VoiceAloneNoAnswer), ("{user}", user));
+
+    public static string VoiceAloneNotYours() =>
+        Format(nameof(VoiceAloneNotYours));
+
+    public static string VoiceAloneStale() =>
+        Format(nameof(VoiceAloneStale));
 
     public static string VoiceChannelRenamed(string oldName, string newName) =>
         Format(nameof(VoiceChannelRenamed), ("{oldName}", oldName), ("{newName}", newName));

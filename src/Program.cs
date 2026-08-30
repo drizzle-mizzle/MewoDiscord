@@ -104,6 +104,9 @@ internal class Program
             }
         }
 
+        // Ретранслятор общих событий в общий чат — подписка до первого события
+        GeneralChatRelay.Subscribe();
+
         // Обработчики событий
         _client.Log += OnLog;
         _client.Ready += () => RunInBackground(OnReady());

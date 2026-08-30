@@ -96,12 +96,6 @@ public static class MessageHandler
 
     private static async Task ProcessMessageAsync(SocketUserMessage userMessage)
     {
-        // Верификация — проверяем до всего
-        if (await VerificationHandler.TryHandleAsync(userMessage))
-        {
-            return;
-        }
-
         // Медиа из соцсетей: работает независимо от ИИ и не потребляет сообщение
         TelegramMediaHandler.HandleInBackground(userMessage);
         XMediaHandler.HandleInBackground(userMessage);

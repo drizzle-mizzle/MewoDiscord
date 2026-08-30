@@ -11,8 +11,13 @@ public static class AppConfig
     public static string BotToken => Get("COMMON", nameof(BotToken));
     public static ulong VoiceStatusChannel => GetUlong("COMMON", nameof(VoiceStatusChannel));
     public static ulong LogsChannel => GetUlong("COMMON", nameof(LogsChannel));
-    public static ulong VerificationChannel => GetUlong("COMMON", nameof(VerificationChannel));
-    public static ulong VerificationRole => GetUlong("COMMON", nameof(VerificationRole));
+
+    /// <summary>
+    /// Общий чат сервера: туда уходят общие события публичных голосовых каналов —
+    /// начало и конец разговора и начало стрима. 0 — не отправлять.
+    /// </summary>
+    public static ulong GeneralChatChannel => GetUlong("COMMON", nameof(GeneralChatChannel));
+
     public static string LocalTimeZone => Get("COMMON", nameof(LocalTimeZone), "Europe/Kiev");
 
     /// <summary>

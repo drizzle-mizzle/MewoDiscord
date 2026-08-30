@@ -4,8 +4,17 @@ Discord bot for a small friend server. Built with .NET 10.0 and [Discord.NET](ht
 
 ## Features
 
-- **Voice activity log** — posts joins, leaves, mute/deafen, streaming and a session timer to a status
-  channel (public voice channels get their own thread) or into the voice channel itself if it is private
+- **Voice activity log** — posts joins, leaves, mute/deafen and streaming to a status channel (public
+  voice channels get their own thread) or into the voice channel itself if it is private. Every line is
+  followed by the session duration on its own, and a session that goes quiet prints it unprompted every
+  half hour
+- **Alone check** — half an hour alone in a voice channel and the bot asks "приём-приём?" with a
+  ping and an "I'm still here" button; a minute without an answer disconnects the user from voice
+  (needs the Move Members permission). Pressing the button restarts the half hour; anyone else
+  pressing it is turned away
+- **Common events** — conversation start/end and the start of a stream are published on a small event bus
+  and relayed to the general chat, so the server sees an invitation to join without the rest of the log.
+  Private voice channels never publish: their log deliberately stays inside the channel
 - **Lonely channel rename** — when someone is left alone in a public voice channel, its name is replaced
   with a fixed phrase after 5 seconds and restored as soon as anyone else joins or the channel empties;
   original names are persisted to disk, so a crash cannot leave a channel stuck with the wrong name
@@ -13,7 +22,6 @@ Discord bot for a small friend server. Built with .NET 10.0 and [Discord.NET](ht
   fetches the post, downloads its video or photos and replies with a blue Components V2 container that
   plays the media inline next to the post caption; files above the server upload limit are linked with a
   preview instead, and Discord's own link preview is suppressed on the original message
-- **Verification** — a keyword in the verification channel grants the configured role
 - **Admin slash commands** — bulk message deletion, speaking as the bot and reinstalling the command list
 - **ChatGPT sessions** — `/chatgpt new` pins a session to the bot's reply; replying to that message
   continues the conversation, so several chats can run side by side in one channel. Requests go through
@@ -52,7 +60,7 @@ API. Their prompts are archived in `src/Files/ai_prompts.legacy.ini`.
    | `BotToken` | yes | Bot token; the bot refuses to start without it |
    | `VoiceStatusChannel` | no | Text channel ID for the voice activity log; `0` disables it for public voice channels (private ones always log into themselves) |
    | `LogsChannel` | no | Text channel ID for bot logs and the ChatGPT request thread; `0` disables it |
-   | `VerificationChannel`, `VerificationRole` | no | Channel ID and role ID for verification; both must be non-zero |
+   | `GeneralChatChannel` | no | Text channel ID that common events are relayed to (conversation start/end and stream start in public voice channels); `0` disables it |
    | `LocalTimeZone` | no | IANA time zone used by `/purge by-time` and log timestamps |
    | `UseChatGpt` | no (default `false`) | Master switch for the ChatGPT part: sessions, the `/chatgpt` commands and the log thread |
    | `ChatGptProxyUrl`, `ChatGptProxyApiKey` | if `UseChatGpt: true` | Address and client key of the CLIProxyAPI sidecar |
