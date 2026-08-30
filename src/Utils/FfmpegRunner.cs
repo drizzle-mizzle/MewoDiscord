@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Text.Json;
 
 using MewoDiscord.Helpers;
@@ -307,10 +307,10 @@ public static class FfmpegRunner
 
             if (root.TryGetProperty("format", out var format))
             {
-                duration = ReadNumber(format, "duration");
-                containerBitrate = (long)ReadNumber(format, "bit_rate");
-                size = (long)ReadNumber(format, "size");
-                container = ReadText(format, "format_name");
+                duration = JsonRead.Number(format, "duration");
+                containerBitrate = (long)JsonRead.Number(format, "bit_rate");
+                size = (long)JsonRead.Number(format, "size");
+                container = JsonRead.Text(format, "format_name");
             }
 
             VideoStreamInfo? video = null;
@@ -318,7 +318,7 @@ public static class FfmpegRunner
 
             foreach (var stream in streams.EnumerateArray())
             {
-                var type = ReadText(stream, "codec_type");
+                var type = JsonRead.Text(stream, "codec_type");
 
                 if (video == null && IsVideoStream(stream, type))
                 {
@@ -381,17 +381,17 @@ public static class FfmpegRunner
     }
 
     private static VideoStreamInfo ReadVideo(JsonElement stream) => new(
-        ReadText(stream, "codec_name") ?? "?",
-        (int)ReadNumber(stream, "width"),
-        (int)ReadNumber(stream, "height"),
+        JsonRead.Text(stream, "codec_name") ?? "?",
+        (int)JsonRead.Number(stream, "width"),
+        (int)JsonRead.Number(stream, "height"),
         ReadFrameRate(stream),
-        (long)ReadNumber(stream, "bit_rate"));
+        (long)JsonRead.Number(stream, "bit_rate"));
 
     private static AudioStreamInfo ReadAudio(JsonElement stream) => new(
-        ReadText(stream, "codec_name") ?? "?",
-        (int)ReadNumber(stream, "channels"),
-        (int)ReadNumber(stream, "sample_rate"),
-        (long)ReadNumber(stream, "bit_rate"));
+        JsonRead.Text(stream, "codec_name") ?? "?",
+        (int)JsonRead.Number(stream, "channels"),
+        (int)JsonRead.Number(stream, "sample_rate"),
+        (long)JsonRead.Number(stream, "bit_rate"));
 
     /// <summary>
     /// Частота кадров приезжает рациональной строкой вида «30000/1001».
@@ -399,7 +399,7 @@ public static class FfmpegRunner
     /// </summary>
     private static double ReadFrameRate(JsonElement stream)
     {
-        var value = ReadText(stream, "avg_frame_rate") ?? ReadText(stream, "r_frame_rate");
+        var value = JsonRead.Text(stream, "avg_frame_rate") ?? JsonRead.Text(stream, "r_frame_rate");
 
         if (value == null)
         {
@@ -418,32 +418,6 @@ public static class FfmpegRunner
         }
 
         return numerator / denominator;
-    }
-
-    private static string? ReadText(JsonElement element, string name) =>
-        element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
-            ? value.GetString()
-            : null;
-
-    /// <summary>
-    /// Число из ответа ffprobe: часть полей приезжает строками, часть — числами.
-    /// </summary>
-    private static double ReadNumber(JsonElement element, string name)
-    {
-        if (!element.TryGetProperty(name, out var value))
-        {
-            return 0;
-        }
-
-        if (value.ValueKind == JsonValueKind.Number)
-        {
-            return value.GetDouble();
-        }
-
-        return value.ValueKind == JsonValueKind.String
-            && double.TryParse(value.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
-                ? parsed
-                : 0;
     }
 
     /// <summary>

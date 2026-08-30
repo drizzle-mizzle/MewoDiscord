@@ -167,7 +167,7 @@ public static class ConvertMedia
 
         if (source.Size > limit)
         {
-            await ReplyAsync(message, BotEmbeds.Warning(BotMessages.MediaTooBig(FormatSize(source.Size))));
+            await ReplyAsync(message, BotEmbeds.Warning(BotMessages.MediaTooBig(DiscordLimits.FormatSize(source.Size))));
             return;
         }
 
@@ -237,7 +237,7 @@ public static class ConvertMedia
 
         if (size > limit)
         {
-            await ReplyAsync(message, BotEmbeds.Warning(BotMessages.MediaResultTooBig(FormatSize(size))));
+            await ReplyAsync(message, BotEmbeds.Warning(BotMessages.MediaResultTooBig(DiscordLimits.FormatSize(size))));
             return;
         }
 
@@ -462,23 +462,15 @@ public static class ConvertMedia
 
             if (url != null)
             {
-                return new MediaSource(url, FileNameFromUrl(url), 0);
+                return new MediaSource(url, DiscordLimits.FileNameFromUrl(url, "media.mp4", requireExtension: true), 0);
             }
         }
 
         return null;
     }
 
-    private static string FileNameFromUrl(string url)
-    {
-        var path = Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.AbsolutePath : url;
-        var name = Path.GetFileName(path);
-
-        return string.IsNullOrWhiteSpace(name) || !name.Contains('.') ? "media.mp4" : name;
-    }
-
     private static long UploadLimit(SocketUserMessage message) =>
-        (long)(((message.Channel as SocketGuildChannel)?.Guild)?.MaxUploadLimit ?? FfmpegRunner.MaxInputBytes);
+        (long)DiscordLimits.UploadLimit(message, FfmpegRunner.MaxInputBytes);
 
     /// <summary>
     /// Качает файл на диск, а не в память: дальше с ним работает ffmpeg, которому
@@ -526,8 +518,6 @@ public static class ConvertMedia
 
     private static async Task ReplyAsync(SocketUserMessage message, Embed embed) =>
         await MediaReply.SendEmbedAsync(message, embed);
-
-    private static string FormatSize(long bytes) => $"{bytes / 1024d / 1024d:F1} МБ";
 
     #endregion
 }

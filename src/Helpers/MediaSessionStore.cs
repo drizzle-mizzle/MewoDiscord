@@ -152,20 +152,7 @@ public static class MediaSessionStore
     {
         lock (FileLock)
         {
-            try
-            {
-                Directory.CreateDirectory(AppConfig.StateDirectory);
-
-                // Пишем во временный файл и подменяем: краш посреди записи не должен
-                // оставить обрезанную БД
-                var tempPath = FilePath + ".tmp";
-                File.WriteAllLines(tempPath, Sessions.Values.Select(Format));
-                File.Move(tempPath, FilePath, overwrite: true);
-            }
-            catch (Exception ex)
-            {
-                BotLogger.Error("Ошибка записи БД медиа-сессий: {Message}", ex.Message);
-            }
+            StateFiles.WriteAtomic(FilePath, Sessions.Values.Select(Format), "БД медиа-сессий");
         }
     }
 

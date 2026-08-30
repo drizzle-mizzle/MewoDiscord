@@ -92,7 +92,7 @@ public static partial class PostMediaHandler
     /// </summary>
     private static async Task<bool> HandleRequestAsync(SocketUserMessage message, PostRequest request, PostStyle style)
     {
-        var uploadLimit = GetUploadLimit(message);
+        var uploadLimit = DiscordLimits.UploadLimit(message, FallbackUploadLimit);
         var post = await request.FetchAsync(uploadLimit);
 
         if (post == null || post.Media.Count == 0)
@@ -123,7 +123,7 @@ public static partial class PostMediaHandler
                 // Не влезло в лимит Discord — покажем превью и ссылку вместо файла
                 if (download.Content == null)
                 {
-                    oversized.Add(FormatSize(download.SizeBytes));
+                    oversized.Add(DiscordLimits.FormatSize(download.SizeBytes));
                     thumbnailUrl ??= media.ThumbnailUrl;
                     continue;
                 }
@@ -428,15 +428,6 @@ public static partial class PostMediaHandler
     }
 
     /// <summary>
-    /// Максимальный размер вложения зависит от уровня буста сервера.
-    /// </summary>
-    private static ulong GetUploadLimit(SocketUserMessage message)
-    {
-        var guild = (message.Channel as SocketGuildChannel)?.Guild;
-        return guild?.MaxUploadLimit ?? FallbackUploadLimit;
-    }
-
-    /// <summary>
     /// Собирает безопасное имя файла: соцсети часто отдают путь без расширения,
     /// а у X к нему ещё цепляется query с токеном. slug — как назвать файл, если из адреса
     /// имени не вышло: по нему в папке загрузок видно, откуда файл.
@@ -462,9 +453,6 @@ public static partial class PostMediaHandler
 
         return name;
     }
-
-    private static string FormatSize(long bytes) =>
-        $"{bytes / 1024d / 1024d:F1} МБ";
 
     [GeneratedRegex(@"[^A-Za-z0-9._-]")]
     private static partial Regex UnsafeFileCharsRegex();

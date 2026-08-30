@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Globalization;
 using System.Text.RegularExpressions;
 
@@ -116,8 +116,7 @@ public static partial class DownloadVideo
         var section = ResolveSection(plan, meta.DurationSeconds);
         var outputSeconds = section == null ? meta.DurationSeconds : section.Value.End - section.Value.Start;
 
-        var uploadLimit = (long)(((message.Channel as SocketGuildChannel)?.Guild)?.MaxUploadLimit
-            ?? FfmpegRunner.MaxInputBytes);
+        var uploadLimit = (long)DiscordLimits.UploadLimit(message, FfmpegRunner.MaxInputBytes);
 
         var hardCap = (long)AppConfig.MediaSettings.MaxSourceMb * 1024 * 1024;
         var choice = YtDlpRunner.Choose(
@@ -128,7 +127,7 @@ public static partial class DownloadVideo
 
         if (choice == null)
         {
-            await MediaReply.SendEmbedAsync(message, BotEmbeds.Warning(BotMessages.YoutubeTooBig(Size(hardCap))));
+            await MediaReply.SendEmbedAsync(message, BotEmbeds.Warning(BotMessages.YoutubeTooBig(DiscordLimits.FormatSize(hardCap))));
             return;
         }
 
@@ -138,7 +137,7 @@ public static partial class DownloadVideo
         {
             await MediaReply.SendEmbedAsync(
                 message,
-                BotEmbeds.Warning(BotMessages.MediaShrinkFailed(Size(uploadLimit))));
+                BotEmbeds.Warning(BotMessages.MediaShrinkFailed(DiscordLimits.FormatSize(uploadLimit))));
 
             return;
         }
@@ -246,7 +245,7 @@ public static partial class DownloadVideo
                 message,
                 BotEmbeds.Warning(Path.GetExtension(working) == ".gif"
                     ? BotMessages.MediaGifTooHeavy()
-                    : BotMessages.MediaShrinkFailed(Size(uploadLimit))));
+                    : BotMessages.MediaShrinkFailed(DiscordLimits.FormatSize(uploadLimit))));
 
             return;
         }
@@ -261,7 +260,7 @@ public static partial class DownloadVideo
 
         if (shrunk)
         {
-            notes.Add(BotMessages.YoutubeRecompressed(Size(uploadLimit)));
+            notes.Add(BotMessages.YoutubeRecompressed(DiscordLimits.FormatSize(uploadLimit)));
         }
 
         // Отправка обязана закончиться внутри using рабочего каталога: вложение
@@ -359,8 +358,8 @@ public static partial class DownloadVideo
             BotLogger.Information(
                 "Круг {Attempt}: получилось {Size}, цель {Target}",
                 attempt,
-                Size(encodedSize),
-                Size(target));
+                DiscordLimits.FormatSize(encodedSize),
+                DiscordLimits.FormatSize(target));
 
             if (encodedSize <= target)
             {
@@ -489,8 +488,6 @@ public static partial class DownloadVideo
     }
 
     private static string Quality(int height) => height > 0 ? $"{height}p" : "минимальном";
-
-    private static string Size(long bytes) => $"{bytes / 1024d / 1024d:F0} МБ";
 
     private static string Bitrate(long bitsPerSecond) =>
         bitsPerSecond <= 0 ? "?" : $"{bitsPerSecond / 1000d / 1000d:0.##} Мбит/с";

@@ -329,7 +329,7 @@ public static class BotMessages
 
             var colonIndex = trimmed.IndexOf(':');
 
-            if (colonIndex > 0 && IsKey(trimmed[..colonIndex]))
+            if (IniFormat.IsKey(trimmed, colonIndex))
             {
                 FlushValue(dict, currentKey, lines);
                 currentKey = trimmed[..colonIndex];
@@ -351,28 +351,6 @@ public static class BotMessages
         FlushValue(dict, currentKey, lines);
 
         return dict;
-    }
-
-    /// <summary>
-    /// Ключом считается только латинский идентификатор: иначе продолжение вроде
-    /// «Используй: yyyy-MM-dd» приняли бы за начало нового сообщения.
-    /// </summary>
-    private static bool IsKey(string candidate)
-    {
-        if (candidate.Length == 0 || !char.IsAsciiLetter(candidate[0]))
-        {
-            return false;
-        }
-
-        foreach (var c in candidate)
-        {
-            if (!char.IsAsciiLetterOrDigit(c) && c != '_')
-            {
-                return false;
-            }
-        }
-
-        return true;
     }
 
     private static void FlushValue(Dictionary<string, string> dict, string? key, List<string> lines)

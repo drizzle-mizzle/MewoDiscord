@@ -163,7 +163,7 @@ public sealed class MediaWorkspace : IDisposable
             {
                 BotLogger.Warning(
                     "Подмёл {Size} мусора от прошлой операции в {Root}",
-                    FormatSize(reclaimed),
+                    DiscordLimits.FormatSize(reclaimed),
                     RootDirectory);
             }
         }
@@ -270,7 +270,6 @@ public sealed class MediaWorkspace : IDisposable
         }
     }
 
-    private static string FormatSize(long bytes) => $"{bytes / 1024d / 1024d:F1} МБ";
 
     #endregion
 }

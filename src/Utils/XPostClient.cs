@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Net;
 using System.Text.Json;
 
@@ -241,8 +241,8 @@ public static class XPostClient
     /// </summary>
     private static MediaLadder? ReadMedia(JsonElement item)
     {
-        var type = ReadText(item, "type");
-        var poster = ReadText(item, "media_url_https");
+        var type = JsonRead.Text(item, "type");
+        var poster = JsonRead.Text(item, "media_url_https");
 
         if (type == "photo")
         {
@@ -302,7 +302,7 @@ public static class XPostClient
                 }
             }
 
-            var text = ReadText(tweet, "text")?.Trim();
+            var text = JsonRead.Text(tweet, "text")?.Trim();
             var caption = string.IsNullOrEmpty(text) ? null : text;
 
             if (media.Count == 0 && caption == null)
@@ -327,8 +327,8 @@ public static class XPostClient
     /// </summary>
     private static MediaLadder? ReadFxMedia(JsonElement item)
     {
-        var type = ReadText(item, "type");
-        var url = ReadText(item, "url");
+        var type = JsonRead.Text(item, "type");
+        var url = JsonRead.Text(item, "url");
 
         if (type == "photo")
         {
@@ -351,7 +351,7 @@ public static class XPostClient
             ladder.Add(url);
         }
 
-        return ladder.Count == 0 ? null : new MediaLadder(IsVideo: true, ReadText(item, "thumbnail_url"), ladder);
+        return ladder.Count == 0 ? null : new MediaLadder(IsVideo: true, JsonRead.Text(item, "thumbnail_url"), ladder);
     }
 
     /// <summary>
@@ -367,9 +367,9 @@ public static class XPostClient
         }
 
         return variants.EnumerateArray()
-            .Where(variant => ReadText(variant, "content_type") == "video/mp4")
-            .OrderByDescending(variant => ReadNumber(variant, "bitrate"))
-            .Select(variant => ReadText(variant, "url"))
+            .Where(variant => JsonRead.Text(variant, "content_type") == "video/mp4")
+            .OrderByDescending(variant => JsonRead.Number(variant, "bitrate"))
+            .Select(variant => JsonRead.Text(variant, "url"))
             .OfType<string>()
             .ToList();
     }
@@ -380,7 +380,7 @@ public static class XPostClient
     /// </summary>
     private static string? ExtractCaption(JsonElement root)
     {
-        var text = ReadText(root, "text");
+        var text = JsonRead.Text(root, "text");
 
         if (text == null)
         {
@@ -393,8 +393,8 @@ public static class XPostClient
         {
             foreach (var link in urls.EnumerateArray())
             {
-                var shortUrl = ReadText(link, "url");
-                var expanded = ReadText(link, "expanded_url");
+                var shortUrl = JsonRead.Text(link, "url");
+                var expanded = JsonRead.Text(link, "expanded_url");
 
                 if (shortUrl != null && expanded != null)
                 {
@@ -407,7 +407,7 @@ public static class XPostClient
         {
             foreach (var item in details.EnumerateArray())
             {
-                var shortUrl = ReadText(item, "url");
+                var shortUrl = JsonRead.Text(item, "url");
 
                 if (shortUrl != null)
                 {
@@ -433,9 +433,9 @@ public static class XPostClient
             return (null, null);
         }
 
-        var login = ReadText(user, "screen_name");
+        var login = JsonRead.Text(user, "screen_name");
 
-        return (ReadText(user, "name"), login == null ? null : $"@{login}");
+        return (JsonRead.Text(user, "name"), login == null ? null : $"@{login}");
     }
 
     /// <summary>
@@ -444,7 +444,7 @@ public static class XPostClient
     /// </summary>
     private static DateTimeOffset? ReadDate(JsonElement root)
     {
-        var text = ReadText(root, "created_at");
+        var text = JsonRead.Text(root, "created_at");
 
         return text != null && DateTimeOffset.TryParse(
             text, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal, out var date)
@@ -468,13 +468,4 @@ public static class XPostClient
         return ReadDate(tweet);
     }
 
-    private static string? ReadText(JsonElement element, string name) =>
-        element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
-            ? value.GetString()
-            : null;
-
-    private static double ReadNumber(JsonElement element, string name) =>
-        element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number
-            ? value.GetDouble()
-            : 0;
 }

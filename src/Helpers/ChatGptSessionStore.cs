@@ -242,21 +242,10 @@ public static class ChatGptSessionStore
 
     private static void SaveIndex()
     {
-        try
-        {
-            Directory.CreateDirectory(AppConfig.StateDirectory);
+        var lines = _sessions.Values.Select(e =>
+            $"{e.Id}|{e.GuildId}|{e.ChannelId}|{e.LastMessageId}|{e.UpdatedAtUtc.ToString("O", CultureInfo.InvariantCulture)}");
 
-            // Пишем во временный файл и подменяем — краш не оставит обрезанную БД
-            var tempPath = IndexPath + ".tmp";
-            var lines = _sessions.Values.Select(e =>
-                $"{e.Id}|{e.GuildId}|{e.ChannelId}|{e.LastMessageId}|{e.UpdatedAtUtc.ToString("O", CultureInfo.InvariantCulture)}");
-            File.WriteAllLines(tempPath, lines);
-            File.Move(tempPath, IndexPath, overwrite: true);
-        }
-        catch (Exception ex)
-        {
-            BotLogger.Error("Ошибка записи индекса сессий ChatGPT: {Message}", ex.Message);
-        }
+        StateFiles.WriteAtomic(IndexPath, lines, "индекса сессий ChatGPT");
     }
 
     /// <summary>
@@ -266,8 +255,6 @@ public static class ChatGptSessionStore
     {
         try
         {
-            Directory.CreateDirectory(StateDirectory);
-
             var dto = new SessionFileDto
             {
                 TotalTurns = entry.Runtime.TotalTurns,
@@ -285,13 +272,11 @@ public static class ChatGptSessionStore
             };
 
             var path = Path.Combine(StateDirectory, entry.Id + ".json");
-            var tempPath = path + ".tmp";
-            File.WriteAllText(tempPath, JsonSerializer.Serialize(dto));
-            File.Move(tempPath, path, overwrite: true);
+            StateFiles.WriteAtomic(path, JsonSerializer.Serialize(dto), $"состояния сессии ChatGPT {entry.Id}");
         }
         catch (Exception ex)
         {
-            BotLogger.Error("Ошибка записи состояния сессии ChatGPT {Id}: {Message}", entry.Id, ex.Message);
+            BotLogger.Error("Ошибка сборки состояния сессии ChatGPT {Id}: {Message}", entry.Id, ex.Message);
         }
     }
 

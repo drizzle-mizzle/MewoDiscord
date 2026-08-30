@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Text.Json;
 
 using MewoDiscord.Helpers;
@@ -394,7 +394,7 @@ public static class YtDlpRunner
                 return null;
             }
 
-            var duration = ReadNumber(root, "duration");
+            var duration = JsonRead.Number(root, "duration");
             var formats = new List<FormatInfo>();
 
             if (root.TryGetProperty("formats", out var list) && list.ValueKind == JsonValueKind.Array)
@@ -404,23 +404,23 @@ public static class YtDlpRunner
                     var bytes = EstimateBytes(format, duration);
 
                     formats.Add(new FormatInfo(
-                        ReadText(format, "ext"),
-                        ReadText(format, "vcodec"),
-                        ReadText(format, "acodec"),
-                        (int)ReadNumber(format, "height"),
+                        JsonRead.Text(format, "ext"),
+                        JsonRead.Text(format, "vcodec"),
+                        JsonRead.Text(format, "acodec"),
+                        (int)JsonRead.Number(format, "height"),
                         bytes,
                         bytes > 0,
-                        ReadText(format, "protocol")));
+                        JsonRead.Text(format, "protocol")));
                 }
             }
 
             return new VideoMeta(
-                ReadText(root, "id") ?? string.Empty,
-                ReadText(root, "title") ?? string.Empty,
+                JsonRead.Text(root, "id") ?? string.Empty,
+                JsonRead.Text(root, "title") ?? string.Empty,
                 duration,
                 root.TryGetProperty("is_live", out var live) && live.ValueKind == JsonValueKind.True,
-                ReadText(root, "live_status"),
-                (int)ReadNumber(root, "age_limit"),
+                JsonRead.Text(root, "live_status"),
+                (int)JsonRead.Number(root, "age_limit"),
                 formats);
         }
         catch (JsonException)
@@ -437,21 +437,21 @@ public static class YtDlpRunner
     /// </summary>
     internal static long EstimateBytes(JsonElement format, double durationSeconds)
     {
-        var exact = ReadNumber(format, "filesize");
+        var exact = JsonRead.Number(format, "filesize");
 
         if (exact > 0)
         {
             return (long)exact;
         }
 
-        var approximate = ReadNumber(format, "filesize_approx");
+        var approximate = JsonRead.Number(format, "filesize_approx");
 
         if (approximate > 0)
         {
             return (long)approximate;
         }
 
-        var bitrate = ReadNumber(format, "tbr");
+        var bitrate = JsonRead.Number(format, "tbr");
 
         return bitrate > 0 && durationSeconds > 0 ? (long)(bitrate * 1000 / 8 * durationSeconds) : 0;
     }
@@ -699,29 +699,6 @@ public static class YtDlpRunner
                 lastSize = size;
             }
         }
-    }
-
-    private static string? ReadText(JsonElement element, string name) =>
-        element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
-            ? value.GetString()
-            : null;
-
-    private static double ReadNumber(JsonElement element, string name)
-    {
-        if (!element.TryGetProperty(name, out var value))
-        {
-            return 0;
-        }
-
-        if (value.ValueKind == JsonValueKind.Number)
-        {
-            return value.GetDouble();
-        }
-
-        return value.ValueKind == JsonValueKind.String
-            && double.TryParse(value.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
-                ? parsed
-                : 0;
     }
 
     private static string Number(double value) => value.ToString("0.###", CultureInfo.InvariantCulture);

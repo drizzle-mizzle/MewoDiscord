@@ -97,20 +97,7 @@ public static class ChannelNameStore
     {
         lock (_fileLock)
         {
-            try
-            {
-                Directory.CreateDirectory(AppConfig.StateDirectory);
-
-                // Пишем во временный файл и подменяем: краш посреди записи не должен
-                // оставить обрезанную БД — именно ради краха она и заводится
-                var tempPath = FilePath + ".tmp";
-                File.WriteAllLines(tempPath, _names.Select(pair => $"{pair.Key}: {pair.Value}"));
-                File.Move(tempPath, FilePath, overwrite: true);
-            }
-            catch (Exception ex)
-            {
-                BotLogger.Error("Ошибка записи БД имён каналов: {Message}", ex.Message);
-            }
+            StateFiles.WriteAtomic(FilePath, _names.Select(pair => $"{pair.Key}: {pair.Value}"), "БД имён каналов");
         }
     }
 }

@@ -287,7 +287,7 @@ public static partial class ChatGptSessionHandler
         };
 
         // Картинки крупнее лимита сервера не грузятся — вместо них уведомление
-        var uploadLimit = ((channel as SocketGuildChannel)?.Guild)?.MaxUploadLimit ?? FallbackUploadLimit;
+        var uploadLimit = DiscordLimits.UploadLimit(channel, FallbackUploadLimit);
         var images = new List<ChatGptClient.GeneratedImage>();
         var oversized = new List<string>();
 
@@ -299,7 +299,7 @@ public static partial class ChatGptSessionHandler
             }
             else
             {
-                oversized.Add(BotMessages.ChatGptImageTooBig(FormatSize(image.Content.Length)));
+                oversized.Add(BotMessages.ChatGptImageTooBig(DiscordLimits.FormatSize(image.Content.Length)));
             }
         }
 
@@ -416,7 +416,7 @@ public static partial class ChatGptSessionHandler
                     continue;
                 }
 
-                files.Add(new ChatGptClient.InputFile(FileNameFromUrl(url), content));
+                files.Add(new ChatGptClient.InputFile(DiscordLimits.FileNameFromUrl(url, "image.png"), content));
             }
             catch (Exception ex)
             {
@@ -466,17 +466,6 @@ public static partial class ChatGptSessionHandler
         }
 
         return url.Contains('?') ? url + "&format=png" : url + "?format=png";
-    }
-
-    /// <summary>
-    /// Имя файла из ссылки — только чтобы модель видела его в шапке сообщения.
-    /// </summary>
-    private static string FileNameFromUrl(string url)
-    {
-        var path = Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.AbsolutePath : url;
-        var name = Path.GetFileName(path);
-
-        return string.IsNullOrWhiteSpace(name) ? "image.png" : name;
     }
 
     /// <summary>
@@ -536,9 +525,6 @@ public static partial class ChatGptSessionHandler
 
         return index == 0 ? $"gpt-image.{extension}" : $"gpt-image-{index + 1}.{extension}";
     }
-
-    private static string FormatSize(long bytes) =>
-        $"{bytes / 1024d / 1024d:F1} МБ";
 
     [GeneratedRegex(@"<@!?(\d+)>")]
     private static partial Regex BotMentionRegex();

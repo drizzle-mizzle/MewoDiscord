@@ -239,7 +239,7 @@ public static class AppConfig
 
             var colonIndex = trimmed.IndexOf(':');
 
-            if (colonIndex > 0 && !trimmed[..colonIndex].Contains(' ') && trimmed[..colonIndex].Trim() == key)
+            if (IniFormat.IsKey(trimmed, colonIndex) && trimmed[..colonIndex].Trim() == key)
             {
                 lines[i] = $"{key}: {value}";
                 File.WriteAllLines(ConfigPath, lines);
@@ -261,70 +261,80 @@ public static class AppConfig
                 return;
             }
 
-            var sections = new Dictionary<string, Dictionary<string, string>>();
-            string? currentSection = null;
-            string? currentKey = null;
-            var lines = new List<string>();
-
-            foreach (var line in File.ReadAllLines(ConfigPath))
-            {
-                var trimmed = line.Trim();
-
-                // Пустые строки и комментарии
-                if (string.IsNullOrWhiteSpace(trimmed) || trimmed.StartsWith('#'))
-                {
-                    continue;
-                }
-
-                // Заголовок секции: [NAME]
-                if (trimmed.StartsWith('[') && trimmed.EndsWith(']'))
-                {
-                    FlushValue(sections, currentSection, currentKey, lines);
-                    currentSection = trimmed[1..^1].Trim();
-                    currentKey = null;
-
-                    if (!sections.ContainsKey(currentSection))
-                    {
-                        sections[currentSection] = new Dictionary<string, string>();
-                    }
-
-                    continue;
-                }
-
-                if (currentSection == null)
-                {
-                    continue;
-                }
-
-                // Новый ключ: слово без пробелов, двоеточие, значение
-                var colonIndex = trimmed.IndexOf(':');
-
-                if (colonIndex > 0 && !trimmed[..colonIndex].Contains(' '))
-                {
-                    FlushValue(sections, currentSection, currentKey, lines);
-                    currentKey = trimmed[..colonIndex].Trim();
-                    var value = trimmed[(colonIndex + 1)..].Trim();
-
-                    if (!string.IsNullOrEmpty(value))
-                    {
-                        lines.Add(value);
-                    }
-                }
-                else if (currentKey != null)
-                {
-                    // Продолжение многострочного значения
-                    lines.Add(trimmed);
-                }
-            }
-
-            FlushValue(sections, currentSection, currentKey, lines);
-            _sections = sections;
+            _sections = Parse(File.ReadAllLines(ConfigPath));
         }
         catch (Exception ex)
         {
             Log.Error("Ошибка при загрузке config.ini: {Message}", ex.Message);
         }
     }
+
+    /// <summary>
+    /// Разбирает config.ini: секции в квадратных скобках, «Ключ: значение», комментарии
+    /// через #, а строка без ключа продолжает предыдущее значение — так пишутся промпты.
+    /// </summary>
+    internal static Dictionary<string, Dictionary<string, string>> Parse(IEnumerable<string> source)
+    {
+        var sections = new Dictionary<string, Dictionary<string, string>>();
+        string? currentSection = null;
+        string? currentKey = null;
+        var lines = new List<string>();
+
+        foreach (var line in source)
+        {
+            var trimmed = line.Trim();
+
+            // Пустые строки и комментарии
+            if (string.IsNullOrWhiteSpace(trimmed) || trimmed.StartsWith('#'))
+            {
+                continue;
+            }
+
+            // Заголовок секции: [NAME]
+            if (trimmed.StartsWith('[') && trimmed.EndsWith(']'))
+            {
+                FlushValue(sections, currentSection, currentKey, lines);
+                currentSection = trimmed[1..^1].Trim();
+                currentKey = null;
+
+                if (!sections.ContainsKey(currentSection))
+                {
+                    sections[currentSection] = new Dictionary<string, string>();
+                }
+
+                continue;
+            }
+
+            if (currentSection == null)
+            {
+                continue;
+            }
+
+            var colonIndex = trimmed.IndexOf(':');
+
+            if (IniFormat.IsKey(trimmed, colonIndex))
+            {
+                FlushValue(sections, currentSection, currentKey, lines);
+                currentKey = trimmed[..colonIndex].Trim();
+                var value = trimmed[(colonIndex + 1)..].Trim();
+
+                if (!string.IsNullOrEmpty(value))
+                {
+                    lines.Add(value);
+                }
+            }
+            else if (currentKey != null)
+            {
+                // Продолжение многострочного значения
+                lines.Add(trimmed);
+            }
+        }
+
+        FlushValue(sections, currentSection, currentKey, lines);
+
+        return sections;
+    }
+
 
     private static void FlushValue(Dictionary<string, Dictionary<string, string>> sections, string? section, string? key, List<string> lines)
     {
