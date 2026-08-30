@@ -1,4 +1,4 @@
-using Discord;
+﻿using Discord;
 using Discord.WebSocket;
 
 using MewoDiscord.Handlers;
@@ -37,7 +37,7 @@ public static class EditProfilePicture
         сама инструкция одной фразой. Ответь строго этой фразой и ничем больше.
         """;
 
-    private static readonly HttpClient Http = new()
+    private static readonly HttpClient _http = new()
     {
         Timeout = TimeSpan.FromSeconds(DownloadTimeoutSeconds)
     };
@@ -160,7 +160,7 @@ public static class EditProfilePicture
     {
         try
         {
-            return await Http.GetByteArrayAsync(url);
+            return await _http.GetByteArrayAsync(url);
         }
         catch (Exception ex)
         {

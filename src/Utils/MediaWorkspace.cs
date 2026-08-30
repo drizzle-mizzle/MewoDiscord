@@ -1,4 +1,4 @@
-using MewoDiscord.Helpers;
+﻿using MewoDiscord.Helpers;
 
 namespace MewoDiscord.Utils;
 
@@ -36,7 +36,7 @@ public sealed class MediaWorkspace : IDisposable
     /// </summary>
     private const int DeleteRetryMs = 200;
 
-    private static readonly SemaphoreSlim Slot = new(1, 1);
+    private static readonly SemaphoreSlim _slot = new(1, 1);
 
     /// <summary>
     /// Чем занят слот прямо сейчас. Пишется и чистится только под захваченным слотом,
@@ -80,7 +80,7 @@ public sealed class MediaWorkspace : IDisposable
     /// </summary>
     public static async Task<MediaWorkspace?> TryAcquireAsync(TimeSpan wait, string what)
     {
-        if (!await Slot.WaitAsync(wait))
+        if (!await _slot.WaitAsync(wait))
         {
             return null;
         }
@@ -100,7 +100,7 @@ public sealed class MediaWorkspace : IDisposable
         {
             // Каталог не создался — значит и слот не наш
             _busy = null;
-            Slot.Release();
+            _slot.Release();
             throw;
         }
     }
@@ -153,7 +153,7 @@ public sealed class MediaWorkspace : IDisposable
 
         ForceDelete(FullPath);
         _busy = null;
-        Slot.Release();
+        _slot.Release();
     }
 
     #region Internals

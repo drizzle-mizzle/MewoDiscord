@@ -1,4 +1,4 @@
-namespace MewoDiscord.Utils;
+﻿namespace MewoDiscord.Utils;
 
 /// <summary>
 /// Расчёт параметров пережатия под заданный размер. Слепой шаг «минус двадцать процентов»
@@ -45,12 +45,12 @@ public static class MediaShrink
     /// <summary>
     /// Ступени разрешения, по которым спускаемся вслед за битрейтом.
     /// </summary>
-    private static readonly int[] HeightLadder = [1080, 720, 576, 480, 360, 240];
+    private static readonly int[] _heightLadder = [1080, 720, 576, 480, 360, 240];
 
     /// <summary>
     /// Ступени битрейта звука, бит/с. Ниже последней речь уже неразборчива.
     /// </summary>
-    private static readonly long[] AudioLadder = [128_000, 96_000, 64_000, 48_000, 32_000];
+    private static readonly long[] _audioLadder = [128_000, 96_000, 64_000, 48_000, 32_000];
 
     /// <summary>
     /// Ниже этой ширины гифка перестаёт быть результатом, которого кто-то хотел.
@@ -66,7 +66,7 @@ public static class MediaShrink
     /// Ступени палитры гифки. Ноль означает «палитру ещё не ограничивали»:
     /// palettegen по умолчанию берёт 256 цветов.
     /// </summary>
-    private static readonly int[] ColorLadder = [64, 32];
+    private static readonly int[] _colorLadder = [64, 32];
 
     /// <summary>
     /// Что именно ужимаем: у видео, гифки и звука разные ручки.
@@ -180,7 +180,7 @@ public static class MediaShrink
         var fps = sourceFps > 0 ? (int)Math.Round(Math.Min(sourceFps, MaxShrinkFps)) : MaxShrinkFps;
         fps = Math.Max(fps, 1);
 
-        var applicable = HeightLadder.Where(height => info.Height <= 0 || height <= info.Height).ToList();
+        var applicable = _heightLadder.Where(height => info.Height <= 0 || height <= info.Height).ToList();
 
         if (applicable.Count == 0)
         {
@@ -283,7 +283,7 @@ public static class MediaShrink
     /// </summary>
     private static FfmpegRunner.EncodeSettings? Snap(long bitrateBps)
     {
-        foreach (var rung in AudioLadder)
+        foreach (var rung in _audioLadder)
         {
             if (rung <= bitrateBps)
             {
@@ -335,7 +335,7 @@ public static class MediaShrink
 
         if (remaining < 1)
         {
-            var next = ColorLadder.FirstOrDefault(rung => colors == 0 || rung < colors);
+            var next = _colorLadder.FirstOrDefault(rung => colors == 0 || rung < colors);
 
             if (next != 0)
             {

@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Globalization;
 
 namespace MewoDiscord.Helpers;
@@ -33,8 +33,8 @@ public static class MediaSessionStore
     /// </summary>
     internal const int MaxSessions = 200;
 
-    private static readonly ConcurrentDictionary<ulong, MediaSession> Sessions = new();
-    private static readonly Lock FileLock = new();
+    private static readonly ConcurrentDictionary<ulong, MediaSession> _sessions = new();
+    private static readonly Lock _fileLock = new();
 
     private static string FilePath => Path.Combine(AppConfig.StateDirectory, "media_sessions.txt");
 
@@ -45,7 +45,7 @@ public static class MediaSessionStore
     {
         try
         {
-            Sessions.Clear();
+            _sessions.Clear();
 
             if (!File.Exists(FilePath))
             {
@@ -58,11 +58,11 @@ public static class MediaSessionStore
 
                 if (session != null)
                 {
-                    Sessions[session.AnchorMessageId] = session;
+                    _sessions[session.AnchorMessageId] = session;
                 }
             }
 
-            BotLogger.Information("Загружено медиа-сессий: {Count}", Sessions.Count);
+            BotLogger.Information("Загружено медиа-сессий: {Count}", _sessions.Count);
         }
         catch (Exception ex)
         {
@@ -73,7 +73,7 @@ public static class MediaSessionStore
     /// <summary>
     /// Сессия, закреплённая за сообщением. null — это не результат операции над медиа.
     /// </summary>
-    public static MediaSession? FindByAnchor(ulong messageId) => Sessions.GetValueOrDefault(messageId);
+    public static MediaSession? FindByAnchor(ulong messageId) => _sessions.GetValueOrDefault(messageId);
 
     /// <summary>
     /// Переносит сессию на новый результат. Старый якорь снимается: отвечать имеет смысл
@@ -88,10 +88,10 @@ public static class MediaSessionStore
     {
         if (previousAnchorId != null)
         {
-            Sessions.TryRemove(previousAnchorId.Value, out _);
+            _sessions.TryRemove(previousAnchorId.Value, out _);
         }
 
-        Sessions[anchorMessageId] = new MediaSession(
+        _sessions[anchorMessageId] = new MediaSession(
             anchorMessageId,
             channelId,
             sourceMessageId,
@@ -106,11 +106,11 @@ public static class MediaSessionStore
 
     private static void Evict()
     {
-        while (Sessions.Count > MaxSessions)
+        while (_sessions.Count > MaxSessions)
         {
-            var oldest = Sessions.Values.MinBy(session => session.UpdatedAt);
+            var oldest = _sessions.Values.MinBy(session => session.UpdatedAt);
 
-            if (oldest == null || !Sessions.TryRemove(oldest.AnchorMessageId, out _))
+            if (oldest == null || !_sessions.TryRemove(oldest.AnchorMessageId, out _))
             {
                 return;
             }
@@ -150,9 +150,9 @@ public static class MediaSessionStore
 
     private static void Save()
     {
-        lock (FileLock)
+        lock (_fileLock)
         {
-            StateFiles.WriteAtomic(FilePath, Sessions.Values.Select(Format), "БД медиа-сессий");
+            StateFiles.WriteAtomic(FilePath, _sessions.Values.Select(Format), "БД медиа-сессий");
         }
     }
 

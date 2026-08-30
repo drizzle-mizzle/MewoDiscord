@@ -26,12 +26,12 @@ internal class Program
     /// <summary>
     /// Модули команд отключённой ИИ-части: код оставлен, но в Discord не регистрируется.
     /// </summary>
-    private static readonly Type[] AiCommandModules = [typeof(SetCommands), typeof(ToggleCommands)];
+    private static readonly Type[] _aiCommandModules = [typeof(SetCommands), typeof(ToggleCommands)];
 
     /// <summary>
     /// Модули команд ChatGPT-части. Регистрируются только при UseChatGpt = true.
     /// </summary>
-    private static readonly Type[] ChatGptCommandModules = [typeof(ChatGptAuthCommands), typeof(ChatGptSessionCommands)];
+    private static readonly Type[] _chatGptCommandModules = [typeof(ChatGptAuthCommands), typeof(ChatGptSessionCommands)];
 
     private static async Task Main()
     {
@@ -90,7 +90,7 @@ internal class Program
         await _interactions.AddModulesAsync(typeof(Program).Assembly, services: null);
 
         // ИИ-часть на OpenRouter отключена целиком — её команды в Discord не регистрируются
-        foreach (var module in AiCommandModules)
+        foreach (var module in _aiCommandModules)
         {
             await _interactions.RemoveModuleAsync(module);
         }
@@ -100,7 +100,7 @@ internal class Program
         {
             BotLogger.Information("ChatGPT отключён (UseChatGpt: false): команды /chatgpt не активны");
 
-            foreach (var module in ChatGptCommandModules)
+            foreach (var module in _chatGptCommandModules)
             {
                 await _interactions.RemoveModuleAsync(module);
             }

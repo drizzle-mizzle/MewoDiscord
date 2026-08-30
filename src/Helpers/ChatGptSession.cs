@@ -1,4 +1,6 @@
-namespace MewoDiscord.Utils;
+﻿using MewoDiscord.Utils;
+
+namespace MewoDiscord.Helpers;
 
 /// <summary>
 /// Состояние диалога с ChatGPT на стороне бота: история сообщений и последняя

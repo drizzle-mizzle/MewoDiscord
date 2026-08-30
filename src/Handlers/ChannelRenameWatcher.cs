@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using Discord;
 using Discord.Net;
 using Discord.WebSocket;
@@ -45,7 +45,7 @@ public static class ChannelRenameWatcher
     /// </summary>
     private const int RenameRequestTimeoutMs = 10_000;
 
-    private static readonly ConcurrentDictionary<ulong, Watcher> Watchers = new();
+    private static readonly ConcurrentDictionary<ulong, Watcher> _watchers = new();
 
     private enum ReconcileResult
     {
@@ -85,7 +85,7 @@ public static class ChannelRenameWatcher
     {
         while (true)
         {
-            if (Watchers.TryGetValue(channel.Id, out var existing))
+            if (_watchers.TryGetValue(channel.Id, out var existing))
             {
                 existing.Pulse();
                 return;
@@ -94,7 +94,7 @@ public static class ChannelRenameWatcher
             // Новый вотчер рождается уже «сигналенным» — Pulse не нужен
             var created = new Watcher();
 
-            if (Watchers.TryAdd(channel.Id, created))
+            if (_watchers.TryAdd(channel.Id, created))
             {
                 _ = Task.Run(() => RunAsync(channel.Guild, channel.Id, created));
                 return;
@@ -218,7 +218,7 @@ public static class ChannelRenameWatcher
         }
         finally
         {
-            Watchers.TryRemove(channelId, out _);
+            _watchers.TryRemove(channelId, out _);
         }
     }
 

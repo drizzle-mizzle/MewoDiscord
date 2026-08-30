@@ -1,4 +1,4 @@
-using System.Text.RegularExpressions;
+﻿using System.Text.RegularExpressions;
 
 using Discord;
 using Discord.WebSocket;
@@ -18,10 +18,10 @@ public static partial class TelegramMediaHandler
     /// <summary>
     /// Фирменный синий Telegram.
     /// </summary>
-    private static readonly Color TelegramBlue = new(0x2AABEE);
+    private static readonly Color _telegramBlue = new(0x2AABEE);
 
-    private static readonly PostMediaHandler.PostStyle Style = new(
-        TelegramBlue,
+    private static readonly PostMediaHandler.PostStyle _style = new(
+        _telegramBlue,
         "telegram",
         BotMessages.TelegramFooter,
         () => BotEmotes.Telegram,
@@ -38,7 +38,7 @@ public static partial class TelegramMediaHandler
                 _ => TelegramPostClient.TryGetPostAsync(link.Channel, link.PostId)))
             .ToList();
 
-        PostMediaHandler.HandleInBackground(message, requests, Style);
+        PostMediaHandler.HandleInBackground(message, requests, _style);
     }
 
     /// <summary>

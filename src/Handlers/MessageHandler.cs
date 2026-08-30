@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Text;
 using System.Text.RegularExpressions;
 using BogaNet.BWF;
@@ -19,8 +19,8 @@ public static class MessageHandler
     private const int MaxHeatLevel = 3;
     private const int ConversationTrackMessages = 3;
     private const int CachePropagationDelayMs = 500;
-    private static readonly TimeSpan HeatCooldown = TimeSpan.FromMinutes(3);
-    private static readonly double[] HeatTemperatureBonus = [0, 0, 0.25, 0.25];
+    private static readonly TimeSpan _heatCooldown = TimeSpan.FromMinutes(3);
+    private static readonly double[] _heatTemperatureBonus = [0, 0, 0.25, 0.25];
 
     private static readonly ConcurrentDictionary<ulong, UserHeatState> _heatMap = new();
     private static readonly ConcurrentDictionary<ulong, int> _activeConversations = new();
@@ -32,21 +32,21 @@ public static class MessageHandler
     /// Регулярка по корням мата (фоллбэк, если BogaNet и словарь не нашли).
     /// Источник: https://gist.github.com/imDaniX/8449f40655fcc1b92ae8d756cbca1264
     /// </summary>
-    private static readonly Regex SwearRegex = new(
+    private static readonly Regex _swearRegex = new(
         @"\b(?:(?:(?:у|[нз]а|(?:хитро|не)?вз?[ыьъ]|с[ьъ]|(?:и|ра)[зс]ъ?|(?:о[тб]|п[оа]д)[ьъ]?|(?:.\B)+?[оаеи\-])\-?)?(?:[её](?:б(?!о[рй]|рач)|п[уа](?:ц|тс))|и[пб][ае][тцд][ьъ]).*?|(?:(?:н[иеа]|(?:ра|и)[зс]|[зд]?[ао](?:т|дн[оа])?|с(?:м[еи])?|а[пб]ч|в[ъы]?|пр[еи])\-?)?ху(?:[яйиеёю]|л+и(?!ган)).*?|бл(?:[эя]|еа?)(?:[дт][ьъ]?)?|\S*?(?:п(?:[иеё]зд|ид[аое]?р|ед(?:р(?!о)|[аое]р|ик)|охую)|бля(?:[дбц]|тс)|[ое]ху[яйиеё]|хуйн).*?|(?:о[тб]?|про|на|вы)?м(?:анд(?:[ауеыи](?:л(?:и[сзщ])?[ауеиы])?|ой|[ао]в.*?|юк(?:ов|[ауи])?|е[нт]ь|ища)|уд(?:[яаиое].+?|е?н(?:[ьюия]|ей))|[ао]л[ао]ф[ьъ](?:[яиюе]|[еёо]й))|елд[ауые].*?|ля[тд]ь|(?:[нз]а|по)х)\b",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     /// <summary>
     /// Регулярка для удаления разделителей между кириллическими буквами (п.и.з.д.а, х*у*й, б л я).
     /// </summary>
-    private static readonly Regex SeparatorRegex = new(
+    private static readonly Regex _separatorRegex = new(
         @"(?<=\p{IsCyrillic})[.\-*_]+(?=\p{IsCyrillic})",
         RegexOptions.Compiled);
 
     /// <summary>
     /// Регулярка для схлопывания повторяющихся букв (хуууууй → хуй).
     /// </summary>
-    private static readonly Regex RepeatedCharsRegex = new(
+    private static readonly Regex _repeatedCharsRegex = new(
         @"(.)\1+",
         RegexOptions.Compiled);
 
@@ -197,7 +197,7 @@ public static class MessageHandler
     /// </summary>
     internal static List<string> FindSwearsByRegex(string text)
     {
-        var matches = SwearRegex.Matches(text);
+        var matches = _swearRegex.Matches(text);
 
         return matches
             .Select(m => m.Value)
@@ -262,10 +262,10 @@ public static class MessageHandler
         var result = sb.ToString();
 
         // Схлопываем повторяющиеся буквы (хуууууй → хуй)
-        result = RepeatedCharsRegex.Replace(result, "$1");
+        result = _repeatedCharsRegex.Replace(result, "$1");
 
         // Убираем разделители между буквами (п.и.з.д.а, х*у*й, б л я)
-        return SeparatorRegex.Replace(result, string.Empty);
+        return _separatorRegex.Replace(result, string.Empty);
     }
 
     /// <summary>
@@ -363,7 +363,7 @@ public static class MessageHandler
 
         // Выбираем системный промпт и температуру по уровню накала
         var systemPrompt = cfg.SystemPrompt.Replace("{botName}", botName);
-        var temperature = cfg.Temperature + HeatTemperatureBonus[heatLevel];
+        var temperature = cfg.Temperature + _heatTemperatureBonus[heatLevel];
 
         BotLogger.LogAi("AI_CENSOR_SETTINGS", "Накал для {User}: уровень {Level}, температура {Temperature:F2}", user, heatLevel, temperature);
 
@@ -379,8 +379,8 @@ public static class MessageHandler
 
     /// <summary>
     /// Возвращает текущий уровень накала для пользователя и обновляет состояние.
-    /// Если с последнего нарушения прошло больше HeatCooldown — сброс на 1.
-    /// Иначе — уровень повышается (макс MaxHeatLevel), бонус температуры берётся из HeatTemperatureBonus.
+    /// Если с последнего нарушения прошло больше _heatCooldown — сброс на 1.
+    /// Иначе — уровень повышается (макс MaxHeatLevel), бонус температуры берётся из _heatTemperatureBonus.
     /// </summary>
     private static int GetAndUpdateHeatLevel(ulong userId)
     {
@@ -391,7 +391,7 @@ public static class MessageHandler
             _ => new UserHeatState { Level = 1, LastViolationTime = now },
             (_, existing) =>
             {
-                if (now - existing.LastViolationTime > HeatCooldown)
+                if (now - existing.LastViolationTime > _heatCooldown)
                 {
                     existing.Level = 1;
                 }
@@ -482,7 +482,7 @@ public static class MessageHandler
     /// <summary>
     /// Регулярка для Discord-упоминаний: &lt;@123&gt;, &lt;@!123&gt;, &lt;#123&gt;, &lt;@&amp;123&gt;.
     /// </summary>
-    private static readonly Regex MentionRegex = new(
+    private static readonly Regex _mentionRegex = new(
         @"<(?:@!?|#|@&)(\d+)>",
         RegexOptions.Compiled);
 
@@ -496,7 +496,7 @@ public static class MessageHandler
             return text;
         }
 
-        return MentionRegex.Replace(text, match =>
+        return _mentionRegex.Replace(text, match =>
         {
             if (!ulong.TryParse(match.Groups[1].Value, out var id))
             {

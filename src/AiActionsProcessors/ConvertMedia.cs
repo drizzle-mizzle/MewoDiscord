@@ -91,7 +91,7 @@ public static class ConvertMedia
         по применённому плану: проценты бери от его размеров, а не от исходных.
         """;
 
-    private static readonly HttpClient Http = new()
+    private static readonly HttpClient _http = new()
     {
         Timeout = TimeSpan.FromSeconds(DownloadTimeoutSeconds)
     };
@@ -505,7 +505,7 @@ public static class ConvertMedia
             // сервер держал бы это чтение бесконечно, а с ним и слот медиа
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(DownloadTimeoutSeconds));
 
-            using var response = await Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+            using var response = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cts.Token);
             response.EnsureSuccessStatusCode();
 
             if (response.Content.Headers.ContentLength > maxBytes)

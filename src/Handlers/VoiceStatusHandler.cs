@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using Discord;
 using Discord.WebSocket;
 using MewoDiscord.Helpers;
@@ -7,35 +7,35 @@ namespace MewoDiscord.Handlers;
 
 public static class VoiceStatusHandler
 {
-    private static readonly AllowedMentions NoMentions = AllowedMentions.None;
-    private static readonly ConcurrentDictionary<ulong, DateTime> ChannelTimers = new();
-    private static readonly ConcurrentDictionary<ulong, IMessageChannel> ChannelTargets = new();
+    private static readonly AllowedMentions _noMentions = AllowedMentions.None;
+    private static readonly ConcurrentDictionary<ulong, DateTime> _channelTimers = new();
+    private static readonly ConcurrentDictionary<ulong, IMessageChannel> _channelTargets = new();
 
     /// <summary>
     /// Голосовой канал открытой сессии: сторожам, которых будит таймер, доступен только
     /// её идентификатор, а состав канала им перепроверять надо.
     /// </summary>
-    private static readonly ConcurrentDictionary<ulong, SocketVoiceChannel> ChannelVoices = new();
+    private static readonly ConcurrentDictionary<ulong, SocketVoiceChannel> _channelVoices = new();
 
-    private static readonly ConcurrentDictionary<ulong, SemaphoreSlim> ChannelLocks = new();
-    private static readonly ConcurrentDictionary<ulong, Timer> IdleTimers = new();
+    private static readonly ConcurrentDictionary<ulong, SemaphoreSlim> _channelLocks = new();
+    private static readonly ConcurrentDictionary<ulong, Timer> _idleTimers = new();
 
-    private static readonly ConcurrentDictionary<ulong, AloneWatch> AloneWatches = new();
+    private static readonly ConcurrentDictionary<ulong, AloneWatch> _aloneWatches = new();
 
     /// <summary>
     /// Сколько журнал молчит, прежде чем длительность разговора напечатается сама.
     /// </summary>
-    private static readonly TimeSpan IdleDurationDelay = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan _idleDurationDelay = TimeSpan.FromMinutes(30);
 
     /// <summary>
     /// Сколько человек сидит в канале один, прежде чем бот спросит «приём-приём?».
     /// </summary>
-    private static readonly TimeSpan AloneCheckDelay = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan _aloneCheckDelay = TimeSpan.FromMinutes(30);
 
     /// <summary>
     /// Сколько ждём ответа на «приём-приём?», прежде чем отключить от канала.
     /// </summary>
-    private static readonly TimeSpan AloneAnswerDelay = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan _aloneAnswerDelay = TimeSpan.FromSeconds(60);
 
     /// <summary>
     /// Префикс custom id кнопки «я ещё тут». Полный вид — prefix:канал:пользователь:
@@ -112,7 +112,7 @@ public static class VoiceStatusHandler
     /// </summary>
     private static async Task UnderChannelLockAsync(ulong channelId, Func<Task> action)
     {
-        var semaphore = ChannelLocks.GetOrAdd(channelId, _ => new SemaphoreSlim(1, 1));
+        var semaphore = _channelLocks.GetOrAdd(channelId, _ => new SemaphoreSlim(1, 1));
         await semaphore.WaitAsync();
 
         try
@@ -136,18 +136,18 @@ public static class VoiceStatusHandler
         // кэш Discord к моменту обработки уже знает обо всех, кто зашёл, и два
         // почти одновременных захода в пустой канал оба увидели бы двоих —
         // сессия не завелась бы вовсе
-        if (!ChannelTimers.ContainsKey(channel.Id))
+        if (!_channelTimers.ContainsKey(channel.Id))
         {
-            ChannelTimers[channel.Id] = DateTime.UtcNow;
-            ChannelVoices[channel.Id] = channel;
+            _channelTimers[channel.Id] = DateTime.UtcNow;
+            _channelVoices[channel.Id] = channel;
 
             var started = BotMessages.VoiceConversationStarted();
 
             if (IsPrivateChannel(channel))
             {
-                await channel.SendMessageAsync(started, allowedMentions: NoMentions);
+                await channel.SendMessageAsync(started, allowedMentions: _noMentions);
 
-                ChannelTargets[channel.Id] = channel;
+                _channelTargets[channel.Id] = channel;
             }
             else
             {
@@ -158,13 +158,13 @@ public static class VoiceStatusHandler
                 // В журнал это сообщение ложится особым путём — корнем треда сессии
                 if (statusChannel != null)
                 {
-                    root = await statusChannel.SendMessageAsync(started, allowedMentions: NoMentions);
+                    root = await statusChannel.SendMessageAsync(started, allowedMentions: _noMentions);
 
                     var thread = await statusChannel.CreateThreadAsync(
                         channel.Name,
                         message: root);
 
-                    ChannelTargets[channel.Id] = thread;
+                    _channelTargets[channel.Id] = thread;
                 }
 
                 // Общим объявляем в любом случае, даже без журнала: общий чат ждёт пары
@@ -208,9 +208,9 @@ public static class VoiceStatusHandler
     private static void CloseSession(ulong channelId)
     {
         StopIdleDuration(channelId);
-        ChannelTargets.TryRemove(channelId, out _);
-        ChannelTimers.TryRemove(channelId, out _);
-        ChannelVoices.TryRemove(channelId, out _);
+        _channelTargets.TryRemove(channelId, out _);
+        _channelTimers.TryRemove(channelId, out _);
+        _channelVoices.TryRemove(channelId, out _);
     }
 
     private static async Task HandleStateChange(
@@ -294,7 +294,7 @@ public static class VoiceStatusHandler
         }
 
         var message = await target.SendMessageAsync(text,
-            allowedMentions: mentions ?? NoMentions,
+            allowedMentions: mentions ?? _noMentions,
             components: components);
 
         await SendDurationAsync(channelId, target);
@@ -312,27 +312,27 @@ public static class VoiceStatusHandler
     {
         await target.SendMessageAsync(
             BotMessages.VoiceSessionDuration(SessionDuration(channelId)),
-            allowedMentions: NoMentions);
+            allowedMentions: _noMentions);
 
         ScheduleIdleDuration(channelId);
     }
 
     /// <summary>
-    /// Заводит сторож тишины на IdleDurationDelay или переводит уже заведённый.
+    /// Заводит сторож тишины на _idleDurationDelay или переводит уже заведённый.
     /// </summary>
     private static void ScheduleIdleDuration(ulong channelId)
     {
-        if (IdleTimers.TryGetValue(channelId, out var existing))
+        if (_idleTimers.TryGetValue(channelId, out var existing))
         {
-            existing.Change(IdleDurationDelay, Timeout.InfiniteTimeSpan);
+            existing.Change(_idleDurationDelay, Timeout.InfiniteTimeSpan);
             return;
         }
 
         var timer = new Timer(_ => _ = ReportIdleDurationAsync(channelId), null,
-            IdleDurationDelay, Timeout.InfiniteTimeSpan);
+            _idleDurationDelay, Timeout.InfiniteTimeSpan);
 
         // Кто-то успел завести свой, пока мы создавали этот, — лишний выбрасываем
-        if (!IdleTimers.TryAdd(channelId, timer))
+        if (!_idleTimers.TryAdd(channelId, timer))
         {
             timer.Dispose();
             ScheduleIdleDuration(channelId);
@@ -344,7 +344,7 @@ public static class VoiceStatusHandler
     /// </summary>
     private static void StopIdleDuration(ulong channelId)
     {
-        if (IdleTimers.TryRemove(channelId, out var timer))
+        if (_idleTimers.TryRemove(channelId, out var timer))
         {
             timer.Dispose();
         }
@@ -378,7 +378,7 @@ public static class VoiceStatusHandler
                 // (обрыв gateway с переподключением событий не переигрывает). Печатать
                 // длительность в закончившийся разговор незачем — закрываем сессию сами,
                 // иначе строка капала бы в мёртвый тред каждые полчаса вечно
-                if (ChannelVoices.TryGetValue(channelId, out var voice) && voice.ConnectedUsers.Count == 0)
+                if (_channelVoices.TryGetValue(channelId, out var voice) && voice.ConnectedUsers.Count == 0)
                 {
                     BotLogger.Information("Канал {ChannelId}: сессия закрыта сторожем — канал пуст", channelId);
                     CloseSession(channelId);
@@ -440,7 +440,7 @@ public static class VoiceStatusHandler
     {
         var users = channel.ConnectedUsers;
         var userId = users.Count == 1 ? users.First().Id : 0;
-        var watched = AloneWatches.TryGetValue(channel.Id, out var existing) ? existing.UserId : (ulong?)null;
+        var watched = _aloneWatches.TryGetValue(channel.Id, out var existing) ? existing.UserId : (ulong?)null;
 
         switch (DecideWatch(users.Count, userId, watched))
         {
@@ -458,10 +458,10 @@ public static class VoiceStatusHandler
 
         var watch = new AloneWatch(channel, userId);
         watch.Timer = new Timer(_ => _ = OnAloneTimerAsync(channel.Id), null,
-            AloneCheckDelay, Timeout.InfiniteTimeSpan);
+            _aloneCheckDelay, Timeout.InfiniteTimeSpan);
 
         // Кто-то успел завести свой, пока мы создавали этот, — лишний выбрасываем
-        if (!AloneWatches.TryAdd(channel.Id, watch))
+        if (!_aloneWatches.TryAdd(channel.Id, watch))
         {
             watch.Dispose();
         }
@@ -513,7 +513,7 @@ public static class VoiceStatusHandler
     /// </summary>
     private static async Task DropAloneWatchAsync(ulong channelId)
     {
-        if (!AloneWatches.TryRemove(channelId, out var watch))
+        if (!_aloneWatches.TryRemove(channelId, out var watch))
         {
             return;
         }
@@ -537,14 +537,14 @@ public static class VoiceStatusHandler
         // заново (или, наоборот, отключить только что ответившего)
         await UnderChannelLockAsync(channelId, () =>
         {
-            if (!AloneWatches.TryGetValue(channelId, out var watch) || watch.UserId != userId || !watch.Asked)
+            if (!_aloneWatches.TryGetValue(channelId, out var watch) || watch.UserId != userId || !watch.Asked)
             {
                 return Task.CompletedTask;
             }
 
             watch.Asked = false;
             watch.Prompt = null;
-            watch.Timer?.Change(AloneCheckDelay, Timeout.InfiniteTimeSpan);
+            watch.Timer?.Change(_aloneCheckDelay, Timeout.InfiniteTimeSpan);
             confirmed = true;
 
             return Task.CompletedTask;
@@ -561,7 +561,7 @@ public static class VoiceStatusHandler
     {
         try
         {
-            if (!AloneWatches.TryGetValue(channelId, out var watch))
+            if (!_aloneWatches.TryGetValue(channelId, out var watch))
             {
                 return;
             }
@@ -617,7 +617,7 @@ public static class VoiceStatusHandler
         }
 
         watch.Asked = true;
-        watch.Timer?.Change(AloneAnswerDelay, Timeout.InfiniteTimeSpan);
+        watch.Timer?.Change(_aloneAnswerDelay, Timeout.InfiniteTimeSpan);
     }
 
     /// <summary>
@@ -662,13 +662,13 @@ public static class VoiceStatusHandler
     }
 
     private static IMessageChannel? GetTarget(ulong channelId) =>
-        ChannelTargets.TryGetValue(channelId, out var target) ? target : null;
+        _channelTargets.TryGetValue(channelId, out var target) ? target : null;
 
     /// <summary>
     /// Сколько идёт разговор в канале. Сессии нет — «0сек».
     /// </summary>
     private static string SessionDuration(ulong channelId) =>
-        ChannelTimers.TryGetValue(channelId, out var startTime)
+        _channelTimers.TryGetValue(channelId, out var startTime)
             ? FormatDuration(DateTime.UtcNow - startTime)
             : "0сек";
 

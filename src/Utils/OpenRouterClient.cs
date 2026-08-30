@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using MewoDiscord.Helpers;
@@ -11,7 +11,7 @@ public static class OpenRouterClient
     private const int DefaultMaxTokens = 1024;
     private const double DefaultTemperature = 1.0;
 
-    private static readonly HttpClient Http = new();
+    private static readonly HttpClient _http = new();
 
     /// <summary>
     /// Отправляет одно сообщение и возвращает текстовый ответ.
@@ -58,12 +58,12 @@ public static class OpenRouterClient
             Messages = apiMessages
         };
 
-        var json = JsonSerializer.Serialize(requestBody, JsonOptions);
+        var json = JsonSerializer.Serialize(requestBody, _jsonOptions);
         using var request = new HttpRequestMessage(HttpMethod.Post, ApiUrl);
         request.Content = new StringContent(json, Encoding.UTF8, "application/json");
         request.Headers.Add("Authorization", $"Bearer {apiKey}");
 
-        using var response = await Http.SendAsync(request);
+        using var response = await _http.SendAsync(request);
         var responseBody = await response.Content.ReadAsStringAsync();
 
         if (!response.IsSuccessStatusCode)
@@ -72,7 +72,7 @@ public static class OpenRouterClient
             return string.Empty;
         }
 
-        var apiResponse = JsonSerializer.Deserialize<ApiResponse>(responseBody, JsonOptions);
+        var apiResponse = JsonSerializer.Deserialize<ApiResponse>(responseBody, _jsonOptions);
         var choice = apiResponse?.Choices?.FirstOrDefault();
 
         return choice?.Message?.Content ?? string.Empty;
@@ -134,7 +134,7 @@ public static class OpenRouterClient
         public string? Content { get; init; }
     }
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    private static readonly JsonSerializerOptions _jsonOptions = new()
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };

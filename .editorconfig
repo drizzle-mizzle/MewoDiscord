@@ -9,6 +9,31 @@ dotnet_diagnostic.IDE0011.severity = error
 # После закрывающей скобки обязана быть пустая строка (StyleCop SA1513)
 dotnet_diagnostic.SA1513.severity = error
 
+# Приватные поля — _camelCase, приватные константы — PascalCase.
+# Правило констант специфичнее (required_modifiers) и выигрывает у общего
+dotnet_naming_rule.private_const_fields_pascal.symbols = private_const_fields
+dotnet_naming_rule.private_const_fields_pascal.style = pascal_case
+dotnet_naming_rule.private_const_fields_pascal.severity = error
+
+dotnet_naming_rule.private_fields_underscored.symbols = private_fields
+dotnet_naming_rule.private_fields_underscored.style = underscore_camel_case
+dotnet_naming_rule.private_fields_underscored.severity = error
+
+dotnet_naming_symbols.private_const_fields.applicable_kinds = field
+dotnet_naming_symbols.private_const_fields.applicable_accessibilities = private
+dotnet_naming_symbols.private_const_fields.required_modifiers = const
+
+dotnet_naming_symbols.private_fields.applicable_kinds = field
+dotnet_naming_symbols.private_fields.applicable_accessibilities = private
+
+dotnet_naming_style.pascal_case.capitalization = pascal_case
+
+dotnet_naming_style.underscore_camel_case.capitalization = camel_case
+dotnet_naming_style.underscore_camel_case.required_prefix = _
+
+# Нейминг репортится общим IDE1006; без этой строки сборка о нарушениях молчит
+dotnet_diagnostic.IDE1006.severity = error
+
 # Отключаем все остальные правила StyleCop — включаем по необходимости
 dotnet_diagnostic.SA0001.severity = none
 dotnet_diagnostic.SA1000.severity = none

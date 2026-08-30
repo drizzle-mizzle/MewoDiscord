@@ -1,4 +1,4 @@
-using System.Text.RegularExpressions;
+﻿using System.Text.RegularExpressions;
 using Discord;
 using Discord.WebSocket;
 using MewoDiscord.AiActionsProcessors;
@@ -29,7 +29,7 @@ public static partial class ChatGptSessionHandler
     /// машине этого хватает, чтобы бота убил OOM. Превышение приезжает исключением
     /// и обрабатывается как обычная неудача скачивания.
     /// </summary>
-    private static readonly HttpClient Http = new()
+    private static readonly HttpClient _http = new()
     {
         Timeout = TimeSpan.FromSeconds(AttachmentDownloadTimeoutSeconds),
         MaxResponseContentBufferSize = ChatGptClient.MaxInputFileBytes
@@ -408,7 +408,7 @@ public static partial class ChatGptSessionHandler
 
             try
             {
-                var content = await Http.GetByteArrayAsync(attachment.Url);
+                var content = await _http.GetByteArrayAsync(attachment.Url);
                 files.Add(new ChatGptClient.InputFile(attachment.Filename, content, attachment.ContentType));
             }
             catch (Exception ex)
@@ -431,7 +431,7 @@ public static partial class ChatGptSessionHandler
 
             try
             {
-                var content = await Http.GetByteArrayAsync(url);
+                var content = await _http.GetByteArrayAsync(url);
 
                 if (content.Length > ChatGptClient.MaxInputFileBytes)
                 {

@@ -1,4 +1,4 @@
-using Discord;
+﻿using Discord;
 using Discord.WebSocket;
 
 using MewoDiscord.Helpers;
@@ -7,8 +7,8 @@ namespace MewoDiscord.AiActionsProcessors;
 
 /// <summary>
 /// Данные, с которыми процессор получает управление.
-/// Text — текст запроса без упоминания бота, с упоминаниями в виде @имя:
-/// именно он подставляется в ACTION_PROMPT действия.
+/// Text — текст запроса без упоминания бота, с упоминаниями в виде @имя: именно он
+/// подставляется вместо {{message}} в HIT_PROMPT действия, а потом в промпты процессора.
 /// </summary>
 public record CustomAiActionContext(
     SocketUserMessage Message,
@@ -23,7 +23,7 @@ public record CustomAiActionContext(
 /// </summary>
 public static class CustomAiActionProcessors
 {
-    private static readonly Dictionary<string, Func<CustomAiActionContext, Task>> Processors =
+    private static readonly Dictionary<string, Func<CustomAiActionContext, Task>> _processors =
         new(StringComparer.OrdinalIgnoreCase)
         {
             ["convert_media"] = ConvertMedia.RunAsync,
@@ -32,5 +32,5 @@ public static class CustomAiActionProcessors
         };
 
     public static Func<CustomAiActionContext, Task>? Find(string actionId) =>
-        Processors.GetValueOrDefault(actionId);
+        _processors.GetValueOrDefault(actionId);
 }

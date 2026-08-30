@@ -95,7 +95,7 @@ public static class ChatGptClient
         ровно тем именем, которое стоит в квадратных скобках.
         """;
 
-    private static readonly HttpClient Http = new()
+    private static readonly HttpClient _http = new()
     {
         Timeout = TimeSpan.FromSeconds(RequestTimeoutSeconds)
     };
@@ -120,7 +120,7 @@ public static class ChatGptClient
     /// <summary>
     /// Пустой ответ — вернуть при любой ошибке.
     /// </summary>
-    private static readonly ChatReply EmptyReply = new(string.Empty, []);
+    private static readonly ChatReply _emptyReply = new(string.Empty, []);
 
     /// <summary>
     /// Ход диалога: роль, текст и data-URL приложенных картинок.
@@ -148,7 +148,7 @@ public static class ChatGptClient
     {
         if (!IsReady())
         {
-            return EmptyReply;
+            return _emptyReply;
         }
 
         var cfg = AppConfig.ChatGptSettings;
@@ -180,7 +180,7 @@ public static class ChatGptClient
         {
             // Отказ авторизации доносим до вызывающего: советовать «попробуй ещё раз»
             // при отозванном токене бессмысленно, там нужен перелогин администратора
-            return response.Unauthorized ? EmptyReply with { Unauthorized = true } : EmptyReply;
+            return response.Unauthorized ? _emptyReply with { Unauthorized = true } : _emptyReply;
         }
 
         var reply = ParseChatResponse(response.Body);
@@ -188,7 +188,7 @@ public static class ChatGptClient
         if (reply.Text.Length == 0 && reply.Images.Count == 0)
         {
             BotLogger.LogAi(BotLogger.ChatGptThreadKey, "⚠️ Пустой ответ от ChatGPT");
-            return EmptyReply;
+            return _emptyReply;
         }
 
         session.Append(turn);
@@ -280,7 +280,7 @@ public static class ChatGptClient
             request.Headers.Add("Authorization", $"Bearer {AppConfig.ChatGptProxyApiKey}");
 
             using var cts = timeout == null ? null : new CancellationTokenSource(timeout.Value);
-            using var response = await Http.SendAsync(request, cts?.Token ?? CancellationToken.None);
+            using var response = await _http.SendAsync(request, cts?.Token ?? CancellationToken.None);
             var responseBody = await response.Content.ReadAsStringAsync();
 
             if (!response.IsSuccessStatusCode)
@@ -547,7 +547,7 @@ public static class ChatGptClient
             Messages = messages
         };
 
-        return JsonSerializer.Serialize(request, JsonOptions);
+        return JsonSerializer.Serialize(request, _jsonOptions);
     }
 
     /// <summary>
@@ -571,7 +571,7 @@ public static class ChatGptClient
     {
         try
         {
-            var response = JsonSerializer.Deserialize<ChatApiResponse>(json, JsonOptions);
+            var response = JsonSerializer.Deserialize<ChatApiResponse>(json, _jsonOptions);
             var message = response?.Choices?.FirstOrDefault()?.Message;
             var images = new List<GeneratedImage>();
 
@@ -589,7 +589,7 @@ public static class ChatGptClient
         }
         catch (JsonException)
         {
-            return EmptyReply;
+            return _emptyReply;
         }
     }
 
@@ -762,7 +762,7 @@ public static class ChatGptClient
         public string? Url { get; init; }
     }
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    private static readonly JsonSerializerOptions _jsonOptions = new()
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };

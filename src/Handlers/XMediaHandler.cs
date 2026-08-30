@@ -1,4 +1,4 @@
-using System.Text.RegularExpressions;
+﻿using System.Text.RegularExpressions;
 
 using Discord;
 using Discord.WebSocket;
@@ -20,10 +20,10 @@ public static partial class XMediaHandler
     /// <summary>
     /// Фирменный чёрный X.
     /// </summary>
-    private static readonly Color XBlack = new(0x000000);
+    private static readonly Color _xBlack = new(0x000000);
 
-    private static readonly PostMediaHandler.PostStyle Style = new(
-        XBlack,
+    private static readonly PostMediaHandler.PostStyle _style = new(
+        _xBlack,
         "x",
         BotMessages.XFooter,
         () => BotEmotes.X,
@@ -40,7 +40,7 @@ public static partial class XMediaHandler
                 limit => XPostClient.TryGetPostAsync(link.StatusId, limit)))
             .ToList();
 
-        PostMediaHandler.HandleInBackground(message, requests, Style);
+        PostMediaHandler.HandleInBackground(message, requests, _style);
     }
 
     /// <summary>
