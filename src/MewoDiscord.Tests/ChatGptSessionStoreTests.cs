@@ -146,7 +146,7 @@ public class ChatGptSessionStoreTests : IDisposable
             "мусор",
             "a|b|c|d|e",
             "id2|1|2|3|не-дата",
-            "id3|1|2|3|2026-01-01T00:00:00.0000000Z|лишнее-поле",
+            "id3|1|2|3|2026-01-01T00:00:00.0000000Z|10|20",
             string.Empty
         ]);
 
@@ -155,6 +155,86 @@ public class ChatGptSessionStoreTests : IDisposable
         var all = ChatGptSessionStore.All();
         Assert.Single(all);
         Assert.Equal(valid.Id, all[0].Id);
+    }
+
+    [Fact]
+    public void Gpt_СтрокаИндексаБезКольцаЧитаетсяКакПрежде()
+    {
+        // Индексы прошлых версий писались пятью полями — терять из-за этого сессии нельзя
+        var indexPath = Path.Combine(_stateDirectory, "chatgpt_sessions.txt");
+        File.WriteAllLines(indexPath, ["старая|1|2|300|2026-01-01T00:00:00.0000000Z"]);
+
+        ChatGptSessionStore.Load();
+
+        var all = ChatGptSessionStore.All();
+        Assert.Single(all);
+        Assert.Equal(300ul, all[0].LastMessageId);
+    }
+
+    [Fact]
+    public void Gpt_НедавниеСообщенияСессииПереживаютРестарт()
+    {
+        var entry = ChatGptSessionStore.Create(1, 2, 100);
+        ChatGptSessionStore.Rebind(entry, 200);
+        ChatGptSessionStore.Rebind(entry, 300);
+
+        ChatGptSessionStore.Load();
+
+        // Последнее сообщение и оба предыдущих узнаются, чужое — нет
+        Assert.True(ChatGptSessionStore.IsKnownMessage(2, 300));
+        Assert.True(ChatGptSessionStore.IsKnownMessage(2, 200));
+        Assert.True(ChatGptSessionStore.IsKnownMessage(2, 100));
+        Assert.False(ChatGptSessionStore.IsKnownMessage(2, 999));
+
+        // Другой канал про эти сообщения ничего не знает
+        Assert.False(ChatGptSessionStore.IsKnownMessage(77, 300));
+    }
+
+    [Fact]
+    public void Gpt_КольцоНедавнихСообщенийНеРастётБезКонца()
+    {
+        var entry = ChatGptSessionStore.Create(1, 2, 1);
+
+        for (var messageId = 2ul; messageId <= 20; messageId++)
+        {
+            ChatGptSessionStore.Rebind(entry, messageId);
+        }
+
+        Assert.Equal(ChatGptSessionStore.RecentMessagesKept, entry.RecentMessageIds.Count);
+        Assert.True(ChatGptSessionStore.IsKnownMessage(2, 20));
+        Assert.False(ChatGptSessionStore.IsKnownMessage(2, 1));
+    }
+
+    [Fact]
+    public void Gpt_ВытесненнаяСессияНеВоскресаетПриRebind()
+    {
+        var evicted = ChatGptSessionStore.Create(1, 2, 100);
+
+        // Заполняем стор доверху: старейшая (наша) вытесняется
+        for (var i = 0; i < ChatGptSessionStore.MaxSessions; i++)
+        {
+            ChatGptSessionStore.Create(1, 2, (ulong)(200 + i));
+        }
+
+        // Хит вытесненной сессии успел доработать и сохраняется — сохранять нечего
+        ChatGptSessionStore.Rebind(evicted, 999);
+
+        var statePath = Path.Combine(_stateDirectory, "chatgpt_sessions", evicted.Id + ".json");
+        Assert.False(File.Exists(statePath));
+        Assert.DoesNotContain(ChatGptSessionStore.All(), e => e.Id == evicted.Id);
+    }
+
+    [Fact]
+    public void Gpt_ОсиротевшиеСостоянияУдаляютсяПриЗагрузке()
+    {
+        ChatGptSessionStore.Create(1, 2, 100);
+
+        var orphanPath = Path.Combine(_stateDirectory, "chatgpt_sessions", "ничейный.json");
+        File.WriteAllText(orphanPath, "{}");
+
+        ChatGptSessionStore.Load();
+
+        Assert.False(File.Exists(orphanPath));
     }
 
     [Fact]

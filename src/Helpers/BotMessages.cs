@@ -181,6 +181,9 @@ public static class BotMessages
     public static string AiActionAvatarFailed(string user) =>
         Format(nameof(AiActionAvatarFailed), ("{user}", user));
 
+    public static string AiActionUserNotFound() =>
+        Format(nameof(AiActionUserNotFound));
+
     public static string MediaTooBig(string size) =>
         Format(nameof(MediaTooBig), ("{size}", size));
 

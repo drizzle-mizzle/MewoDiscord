@@ -18,6 +18,12 @@ public static class ChatGptSessionStore
     /// </summary>
     internal const int MaxSessions = 20;
 
+    /// <summary>
+    /// Сколько предыдущих сообщений сессии помним сверх последнего — см.
+    /// <see cref="SessionEntry.RecentMessageIds"/>.
+    /// </summary>
+    internal const int RecentMessagesKept = 8;
+
     private static readonly Dictionary<string, SessionEntry> _sessions = new();
     private static readonly Lock _lock = new();
 
@@ -42,6 +48,14 @@ public static class ChatGptSessionStore
         public required ulong ChannelId { get; init; }
 
         public ulong LastMessageId { get; internal set; }
+
+        /// <summary>
+        /// Недавние сообщения сессии, кроме последнего: по ним видно, что реплай пришёл
+        /// именно в эту ветку, пусть и не в её конец. Кольцо на
+        /// <see cref="RecentMessagesKept"/> записей — на «это моё сообщение?» его хватает,
+        /// а индекс не растёт.
+        /// </summary>
+        internal List<ulong> RecentMessageIds { get; } = [];
 
         public DateTime UpdatedAtUtc { get; internal set; }
 
@@ -88,6 +102,7 @@ public static class ChatGptSessionStore
                 }
 
                 BotLogger.Information("Загружено сессий ChatGPT: {Count}", _sessions.Count);
+                DeleteOrphanStates();
             }
             catch (Exception ex)
             {
@@ -169,10 +184,44 @@ public static class ChatGptSessionStore
     {
         lock (_lock)
         {
+            // Сессию могло вытеснить, пока её хит выполнялся: у обрабатываемой сессии
+            // метка старая, и она — законная кандидатка на вылет. Сохранять вытесненную
+            // нельзя: индекс её уже не содержит, а файл состояния воскрес бы навсегда
+            if (!_sessions.ContainsKey(entry.Id))
+            {
+                BotLogger.Information("Сессия ChatGPT {Id} вытеснена во время хита — состояние не сохраняем", entry.Id);
+                return;
+            }
+
+            if (entry.LastMessageId != 0)
+            {
+                entry.RecentMessageIds.Add(entry.LastMessageId);
+
+                while (entry.RecentMessageIds.Count > RecentMessagesKept)
+                {
+                    entry.RecentMessageIds.RemoveAt(0);
+                }
+            }
+
             entry.LastMessageId = newLastMessageId;
             entry.UpdatedAtUtc = NextStamp();
             SaveIndex();
             SaveState(entry);
+        }
+    }
+
+    /// <summary>
+    /// Принадлежит ли сообщение канала какой-нибудь сессии — её последнему сообщению
+    /// или одному из недавних. Нужно, чтобы отличить реплай в старую ветку сессии
+    /// (правки истории не поддерживаются, такой реплай игнорируется) от реплая
+    /// на любое другое сообщение бота, который трогать не наше дело.
+    /// </summary>
+    public static bool IsKnownMessage(ulong channelId, ulong messageId)
+    {
+        lock (_lock)
+        {
+            return _sessions.Values.Any(e => e.ChannelId == channelId
+                && (e.LastMessageId == messageId || e.RecentMessageIds.Contains(messageId)));
         }
     }
 
@@ -188,6 +237,41 @@ public static class ChatGptSessionStore
     }
 
     #region Internals
+
+    /// <summary>
+    /// Сносит файлы состояния, которых нет в индексе. Такие остаются от вытеснений,
+    /// заставших сессию за работой, и сами по себе не исчезают: индекс о них не помнит,
+    /// а вытеснение бьёт только по живым записям. Каждый — история и картинка, то есть
+    /// мегабайты в томе состояния.
+    /// </summary>
+    private static void DeleteOrphanStates()
+    {
+        try
+        {
+            if (!Directory.Exists(StateDirectory))
+            {
+                return;
+            }
+
+            var orphans = Directory.GetFiles(StateDirectory, "*.json")
+                .Where(path => !_sessions.ContainsKey(Path.GetFileNameWithoutExtension(path)))
+                .ToList();
+
+            foreach (var path in orphans)
+            {
+                File.Delete(path);
+            }
+
+            if (orphans.Count > 0)
+            {
+                BotLogger.Information("Удалено осиротевших состояний сессий ChatGPT: {Count}", orphans.Count);
+            }
+        }
+        catch (Exception ex)
+        {
+            BotLogger.Warning("Не удалось подчистить состояния сессий ChatGPT: {Message}", ex.Message);
+        }
+    }
 
     /// <summary>
     /// Метка времени, строго больше предыдущей выданной.
@@ -206,14 +290,16 @@ public static class ChatGptSessionStore
     }
 
     /// <summary>
-    /// Разбирает строку индекса: id|guildId|channelId|lastMessageId|updatedAtUtc.
+    /// Разбирает строку индекса: id|guildId|channelId|lastMessageId|updatedAtUtc
+    /// и необязательное шестое поле — недавние сообщения сессии через запятую.
+    /// Строки без него остались от прежних версий и читаются как есть.
     /// null — строка битая, пропускаем.
     /// </summary>
     internal static SessionEntry? ParseIndexLine(string line)
     {
         var parts = line.Trim().Split('|');
 
-        if (parts.Length != 5 || parts[0].Length == 0)
+        if (parts.Length is not (5 or 6) || parts[0].Length == 0)
         {
             return null;
         }
@@ -230,7 +316,7 @@ public static class ChatGptSessionStore
             return null;
         }
 
-        return new SessionEntry
+        var entry = new SessionEntry
         {
             Id = parts[0],
             GuildId = guildId,
@@ -238,12 +324,25 @@ public static class ChatGptSessionStore
             LastMessageId = messageId,
             UpdatedAtUtc = updatedAt
         };
+
+        if (parts.Length == 6)
+        {
+            foreach (var recent in parts[5].Split(',', StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (ulong.TryParse(recent, out var recentId))
+                {
+                    entry.RecentMessageIds.Add(recentId);
+                }
+            }
+        }
+
+        return entry;
     }
 
     private static void SaveIndex()
     {
         var lines = _sessions.Values.Select(e =>
-            $"{e.Id}|{e.GuildId}|{e.ChannelId}|{e.LastMessageId}|{e.UpdatedAtUtc.ToString("O", CultureInfo.InvariantCulture)}");
+            $"{e.Id}|{e.GuildId}|{e.ChannelId}|{e.LastMessageId}|{e.UpdatedAtUtc.ToString("O", CultureInfo.InvariantCulture)}|{string.Join(',', e.RecentMessageIds)}");
 
         StateFiles.WriteAtomic(IndexPath, lines, "индекса сессий ChatGPT");
     }

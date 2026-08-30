@@ -1,4 +1,4 @@
-using Serilog;
+﻿using Serilog;
 
 namespace MewoDiscord.Helpers;
 
@@ -47,7 +47,7 @@ public static class AppConfig
     public static string ChatGptProxyApiKey => Get("COMMON", nameof(ChatGptProxyApiKey));
 
     /// <summary>
-    /// Пароль management API CLIProxyAPI — для OAuth-логина через /chatgpt login.
+    /// Пароль management API CLIProxyAPI — для OAuth-логина через /chatgpt-auth login.
     /// Совпадает с MANAGEMENT_PASSWORD в cliproxy/management.env.
     /// </summary>
     public static string ChatGptManagementKey => Get("COMMON", nameof(ChatGptManagementKey));

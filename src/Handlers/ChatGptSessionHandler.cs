@@ -23,11 +23,16 @@ public static partial class ChatGptSessionHandler
     private const int AttachmentDownloadTimeoutSeconds = 60;
 
     /// <summary>
-    /// Клиент для скачивания вложений Discord (CDN, прокси не нужен).
+    /// Клиент для скачивания вложений Discord (CDN, прокси не нужен). Потолок буфера
+    /// обязателен: картинку из embed'а качают по адресу с чужого хоста, размер которого
+    /// заранее неизвестен, а без предела ответ буферизуется в память целиком — на тесной
+    /// машине этого хватает, чтобы бота убил OOM. Превышение приезжает исключением
+    /// и обрабатывается как обычная неудача скачивания.
     /// </summary>
     private static readonly HttpClient Http = new()
     {
-        Timeout = TimeSpan.FromSeconds(AttachmentDownloadTimeoutSeconds)
+        Timeout = TimeSpan.FromSeconds(AttachmentDownloadTimeoutSeconds),
+        MaxResponseContentBufferSize = ChatGptClient.MaxInputFileBytes
     };
 
     /// <summary>
@@ -102,9 +107,14 @@ public static partial class ChatGptSessionHandler
                 quoted = await FetchMessageAsync(message.Channel, referencedId.Value) ?? quoted;
             }
 
-            if (quoted?.Author.Id == botId && ChatGptSessionStore.HasSessions(message.Channel.Id))
+            // Реплай в саму ветку сессии, но не в её конец: правки истории и вилки
+            // не поддерживаются — по ТЗ просто игнор, без реакции. Проверяем именно
+            // принадлежность сессии, а не авторство бота: иначе в канале с сессиями
+            // молча пропадал бы и «@бот сделай гифку» реплаем на медиа-контейнер,
+            // и повтор просьбы реплаем на карточку ошибки
+            if (quoted?.Author.Id == botId
+                && ChatGptSessionStore.IsKnownMessage(message.Channel.Id, referencedId.Value))
             {
-                // Не последнее сообщение сессии — по ТЗ просто игнор, без реакции
                 BotLogger.Information("ChatGPT: реплай на старое сообщение {MessageId} проигнорирован", referencedId.Value);
                 return true;
             }
@@ -127,10 +137,6 @@ public static partial class ChatGptSessionHandler
     }
 
     /// <summary>
-    /// Запускает обработку хита в фоне: генерация занимает минуты и не должна
-    /// держать канальный замок MessageHandler.
-    /// </summary>
-    /// <summary>
     /// Запускает круг правок медиа в фоне: ffmpeg работает секундами и минутами,
     /// а канальный замок MessageHandler держать столько нельзя.
     /// </summary>
@@ -149,6 +155,10 @@ public static partial class ChatGptSessionHandler
         });
     }
 
+    /// <summary>
+    /// Запускает обработку хита в фоне: генерация занимает минуты и не должна
+    /// держать канальный замок MessageHandler.
+    /// </summary>
     private static void StartHit(SocketUserMessage message, ChatGptSessionStore.SessionEntry entry, IMessage? quoted)
     {
         _ = Task.Run(async () =>
@@ -257,11 +267,11 @@ public static partial class ChatGptSessionHandler
     /// переезжает на последнее отправленное сообщение; при ошибке не трогается —
     /// реплай на прежнее сообщение можно повторить. Замок сессии берёт вызывающий.
     /// </summary>
-    /// <summary>
-    /// Возвращает последнее отправленное сообщение ответа — за него цепляются те, кому
-    /// нужно знать, чем кончился ход: медиа-сессия переезжает на него, если модель
-    /// прислала картинку. null — ответа не вышло.
-    /// </summary>
+    /// <returns>
+    /// Последнее отправленное сообщение ответа — за него цепляются те, кому нужно знать,
+    /// чем кончился ход: медиа-сессия переезжает на него, если модель прислала картинку.
+    /// null — ответа не вышло.
+    /// </returns>
     internal static async Task<IUserMessage?> RunTurnAsync(
         ISocketMessageChannel channel,
         ulong referenceMessageId,
@@ -272,7 +282,13 @@ public static partial class ChatGptSessionHandler
 
         if (reply.Text.Length == 0 && reply.Images.Count == 0)
         {
-            await ReplyAsync(channel, referenceMessageId, BotEmbeds.Error(BotMessages.ChatGptRequestFailed()));
+            // Умершая авторизация повтором не лечится — про неё говорим прямо,
+            // иначе пользователь будет долбить реплаями впустую
+            var error = reply.Unauthorized
+                ? BotMessages.ChatGptNotAuthorized()
+                : BotMessages.ChatGptRequestFailed();
+
+            await ReplyAsync(channel, referenceMessageId, BotEmbeds.Error(error));
             return null;
         }
 
@@ -420,7 +436,10 @@ public static partial class ChatGptSessionHandler
             }
             catch (Exception ex)
             {
+                // Сюда же приходит превышение потолка буфера — для пользователя это
+                // такая же «не скачалась», и в запрос уйдёт пометка
                 BotLogger.Warning("ChatGPT: не удалось скачать картинку из embed'а {Url}: {Message}", url, ex.Message);
+                notes.Add("[картинку по ссылке не удалось скачать]");
             }
         }
 

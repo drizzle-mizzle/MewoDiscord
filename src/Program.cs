@@ -31,7 +31,7 @@ internal class Program
     /// <summary>
     /// Модули команд ChatGPT-части. Регистрируются только при UseChatGpt = true.
     /// </summary>
-    private static readonly Type[] ChatGptCommandModules = [typeof(ChatGptCommands), typeof(ChatGptSessionCommands)];
+    private static readonly Type[] ChatGptCommandModules = [typeof(ChatGptAuthCommands), typeof(ChatGptSessionCommands)];
 
     private static async Task Main()
     {

@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using MewoDiscord.Helpers;
@@ -17,20 +17,6 @@ public static class ChatGptClient
 {
     private const string ChatCompletionsPath = "/v1/chat/completions";
 
-    // Management API CLIProxyAPI — OAuth-логин и список аккаунтов
-    private const string ManagementAuthUrlPath = "/v0/management/codex-auth-url";
-    private const string ManagementCallbackPath = "/v0/management/oauth-callback";
-    private const string ManagementAuthStatusPath = "/v0/management/get-auth-status";
-    private const string ManagementAuthFilesPath = "/v0/management/auth-files";
-
-    /// <summary>
-    /// Сколько раз и с каким шагом опрашивать статус логина после вставки ссылки
-    /// (обмен кода на токены занимает считанные секунды).
-    /// </summary>
-    private const int LoginPollAttempts = 30;
-
-    private const int LoginPollDelayMs = 1000;
-
     /// <summary>
     /// Генерация картинки занимает минуты, обычный таймаут HttpClient не подходит.
     /// Читается один раз при создании клиента, горячая перезагрузка не подхватит.
@@ -38,9 +24,24 @@ public static class ChatGptClient
     private const int RequestTimeoutSeconds = 300;
 
     /// <summary>
+    /// Потолок служебного запроса к инстант-модели. Ответ там — «ДА» или одна фраза,
+    /// и ждать его дольше незачем: этот запрос делается под замком канала, и пятиминутный
+    /// таймаут генерации картинок остановил бы на нём весь канал.
+    /// </summary>
+    private const int InstantTimeoutSeconds = 30;
+
+    /// <summary>
     /// Максимум ходов в истории сессии (обмен «вопрос-ответ» — это два хода).
     /// </summary>
     internal const int MaxHistoryTurns = 40;
+
+    /// <summary>
+    /// Сколько последних ходов истории хранят приложенные к ним картинки. Дальше в прошлое
+    /// от них остаётся только служебная строка с именами файлов: картинки уходят в запрос
+    /// при каждом обмене, и без этого потолка сессия с парой фотографий раздувает
+    /// и запрос, и своё состояние на диске до неподъёмных размеров.
+    /// </summary>
+    internal const int MaxImageTurns = 4;
 
     /// <summary>
     /// Максимальный размер входного файла: base64 раздувает его ещё на треть,
@@ -111,8 +112,10 @@ public static class ChatGptClient
 
     /// <summary>
     /// Ответ чата: текст и картинки, которые модель решила нарисовать (может быть и то, и другое).
+    /// <paramref name="Unauthorized"/> — ответа не будет, пока администратор не перелогинится:
+    /// повтор запроса тут не поможет, и предлагать его пользователю нельзя.
     /// </summary>
-    public record ChatReply(string Text, IReadOnlyList<GeneratedImage> Images);
+    public record ChatReply(string Text, IReadOnlyList<GeneratedImage> Images, bool Unauthorized = false);
 
     /// <summary>
     /// Пустой ответ — вернуть при любой ошибке.
@@ -133,26 +136,6 @@ public static class ChatGptClient
         string? AuthorName = null,
         string? QuotedAuthor = null,
         string? QuotedText = null);
-
-    /// <summary>
-    /// Начатый OAuth-логин: ссылка для браузера и state сессии (живёт 5 минут).
-    /// </summary>
-    public record LoginStart(string Url, string State);
-
-    /// <summary>
-    /// Результат завершения логина. Error — техническая причина отказа.
-    /// </summary>
-    public record LoginResult(bool Ok, string? Error);
-
-    /// <summary>
-    /// Подключённый к прокси аккаунт ChatGPT.
-    /// </summary>
-    public record ChatGptAccount(string Name, string? Email, bool Disabled, bool Unavailable, string? StatusMessage);
-
-    /// <summary>
-    /// Разобранный ответ get-auth-status: ok, wait или error с причиной.
-    /// </summary>
-    internal record AuthStatus(string Status, string? Error);
 
     /// <summary>
     /// Отправляет сообщение в чат с учётом истории сессии. Картинки из files уходят
@@ -191,14 +174,16 @@ public static class ChatGptClient
             turn.ImageDataUrls.Count,
             turn.Text);
 
-        var responseBody = await PostJsonAsync(ChatCompletionsPath, json);
+        var response = await PostJsonAsync(ChatCompletionsPath, json);
 
-        if (responseBody == null)
+        if (response.Body == null)
         {
-            return EmptyReply;
+            // Отказ авторизации доносим до вызывающего: советовать «попробуй ещё раз»
+            // при отозванном токене бессмысленно, там нужен перелогин администратора
+            return response.Unauthorized ? EmptyReply with { Unauthorized = true } : EmptyReply;
         }
 
-        var reply = ParseChatResponse(responseBody);
+        var reply = ParseChatResponse(response.Body);
 
         if (reply.Text.Length == 0 && reply.Images.Count == 0)
         {
@@ -237,328 +222,21 @@ public static class ChatGptClient
 
         BotLogger.LogAi(BotLogger.ChatGptThreadKey, "⚡ Инстант-запрос ({Model}):\n{Text}", model, prompt);
 
-        var responseBody = await PostJsonAsync(ChatCompletionsPath, json);
+        var response = await PostJsonAsync(ChatCompletionsPath, json, TimeSpan.FromSeconds(InstantTimeoutSeconds));
 
-        if (responseBody == null)
+        if (response.Body == null)
         {
             return string.Empty;
         }
 
-        var reply = ParseChatResponse(responseBody).Text.Trim();
+        var reply = ParseChatResponse(response.Body).Text.Trim();
 
         BotLogger.LogAi(BotLogger.ChatGptThreadKey, "⚡ Инстант-ответ:\n{Reply}", reply.Length > 0 ? reply : "(пусто)");
 
         return reply;
     }
 
-    /// <summary>
-    /// Начинает OAuth-логин Codex: возвращает ссылку для браузера и state сессии.
-    /// null — прокси недоступен или management API выключен.
-    /// </summary>
-    public static async Task<LoginStart?> BeginLoginAsync()
-    {
-        if (!IsManagementReady())
-        {
-            return null;
-        }
-
-        var response = await SendManagementAsync(HttpMethod.Get, ManagementAuthUrlPath);
-
-        if (response == null || response.Value.Status < 200 || response.Value.Status >= 300)
-        {
-            return null;
-        }
-
-        var start = ParseLoginStartResponse(response.Value.Body);
-
-        if (start != null)
-        {
-            BotLogger.LogAi(BotLogger.ChatGptThreadKey, "🔐 Начат OAuth-логин Codex, state: {State}", start.State);
-        }
-
-        return start;
-    }
-
-    /// <summary>
-    /// Завершает логин: передаёт прокси ссылку, на которую средиректил браузер после входа
-    /// (http://localhost:1455/auth/callback?code=...&amp;state=...), и ждёт обмена кода на токены.
-    /// </summary>
-    public static async Task<LoginResult> CompleteLoginAsync(string redirectUrl)
-    {
-        if (!IsManagementReady())
-        {
-            return new LoginResult(false, "прокси недоступен или не задан ChatGptManagementKey");
-        }
-
-        var state = ExtractStateFromRedirectUrl(redirectUrl);
-
-        if (state == null)
-        {
-            return new LoginResult(false, "в ссылке нет параметров code и state — нужен полный URL из адресной строки");
-        }
-
-        var response = await SendManagementAsync(HttpMethod.Post, ManagementCallbackPath, BuildOAuthCallbackJson(redirectUrl));
-
-        if (response == null)
-        {
-            return new LoginResult(false, "прокси недоступен");
-        }
-
-        if (response.Value.Status < 200 || response.Value.Status >= 300)
-        {
-            return new LoginResult(false, $"прокси отклонил ссылку ({response.Value.Status}) — возможно, сессия логина истекла, начни заново");
-        }
-
-        // Прокси меняет код на токены в фоне — опрашиваем статус
-        for (var attempt = 0; attempt < LoginPollAttempts; attempt++)
-        {
-            await Task.Delay(LoginPollDelayMs);
-
-            var statusResponse = await SendManagementAsync(HttpMethod.Get, $"{ManagementAuthStatusPath}?state={Uri.EscapeDataString(state)}");
-
-            if (statusResponse == null)
-            {
-                continue;
-            }
-
-            var status = ParseAuthStatusResponse(statusResponse.Value.Body);
-
-            if (status.Status == "ok")
-            {
-                BotLogger.LogAi(BotLogger.ChatGptThreadKey, "✅ OAuth-логин Codex завершён");
-                return new LoginResult(true, null);
-            }
-
-            if (status.Status == "error")
-            {
-                return new LoginResult(false, status.Error ?? "неизвестная ошибка");
-            }
-        }
-
-        return new LoginResult(false, "прокси не подтвердил логин за отведённое время");
-    }
-
-    /// <summary>
-    /// Возвращает подключённые к прокси аккаунты Codex. null — прокси недоступен.
-    /// </summary>
-    public static async Task<IReadOnlyList<ChatGptAccount>?> GetAccountsAsync()
-    {
-        if (!IsManagementReady())
-        {
-            return null;
-        }
-
-        var response = await SendManagementAsync(HttpMethod.Get, ManagementAuthFilesPath);
-
-        if (response == null || response.Value.Status < 200 || response.Value.Status >= 300)
-        {
-            return null;
-        }
-
-        return ParseAuthFilesResponse(response.Value.Body);
-    }
-
-    /// <summary>
-    /// Есть ли у прокси хотя бы один рабочий аккаунт ChatGPT.
-    /// null — проверить не удалось (management API не настроен или прокси не ответил):
-    /// вызывающий решает сам, мешать ему или нет.
-    /// </summary>
-    public static async Task<bool?> HasWorkingAccountAsync()
-    {
-        var accounts = await GetAccountsAsync();
-
-        return accounts?.Any(account => !account.Disabled && !account.Unavailable);
-    }
-
     #region Внутренности
-
-    /// <summary>
-    /// Проверяет доступность management API: флаг, адрес и пароль management.
-    /// </summary>
-    private static bool IsManagementReady()
-    {
-        if (!AppConfig.UseChatGpt)
-        {
-            BotLogger.Warning("ChatGPT-часть выключена (UseChatGpt: false)");
-            return false;
-        }
-
-        if (string.IsNullOrEmpty(AppConfig.ChatGptProxyUrl) || string.IsNullOrEmpty(AppConfig.ChatGptManagementKey))
-        {
-            BotLogger.Warning("ChatGptProxyUrl или ChatGptManagementKey не заданы");
-            return false;
-        }
-
-        return true;
-    }
-
-    /// <summary>
-    /// Запрос к management API прокси с ключом X-Management-Key.
-    /// null — сетевая ошибка (уже залогирована); иначе статус и тело как есть.
-    /// </summary>
-    private static async Task<(int Status, string Body)?> SendManagementAsync(HttpMethod method, string path, string? json = null)
-    {
-        var url = AppConfig.ChatGptProxyUrl.TrimEnd('/') + path;
-
-        try
-        {
-            using var request = new HttpRequestMessage(method, url);
-            request.Headers.Add("X-Management-Key", AppConfig.ChatGptManagementKey);
-
-            if (json != null)
-            {
-                request.Content = new StringContent(json, Encoding.UTF8, "application/json");
-            }
-
-            using var response = await Http.SendAsync(request);
-            var responseBody = await response.Content.ReadAsStringAsync();
-
-            if (!response.IsSuccessStatusCode)
-            {
-                BotLogger.Error("Management API прокси ошибка {StatusCode}: {Body} (404 — не задан MANAGEMENT_PASSWORD в cliproxy/management.env)", (int)response.StatusCode, responseBody);
-            }
-
-            return ((int)response.StatusCode, responseBody);
-        }
-        catch (Exception ex)
-        {
-            BotLogger.Error("Management API прокси недоступен ({Url}): {Message}", url, ex.Message);
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// Разбирает ответ codex-auth-url: ссылка для браузера и state сессии.
-    /// </summary>
-    internal static LoginStart? ParseLoginStartResponse(string json)
-    {
-        try
-        {
-            var response = JsonSerializer.Deserialize<LoginStartResponse>(json, JsonOptions);
-
-            if (string.IsNullOrEmpty(response?.Url) || string.IsNullOrEmpty(response.State))
-            {
-                return null;
-            }
-
-            return new LoginStart(response.Url, response.State);
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// Достаёт state из ссылки, на которую средиректил браузер после логина.
-    /// null — в ссылке нет параметров code и state (вставлено что-то не то).
-    /// </summary>
-    internal static string? ExtractStateFromRedirectUrl(string url)
-    {
-        var queryIndex = url.IndexOf('?');
-
-        if (queryIndex < 0 || queryIndex == url.Length - 1)
-        {
-            return null;
-        }
-
-        string? code = null;
-        string? state = null;
-
-        foreach (var pair in url[(queryIndex + 1)..].Split('&'))
-        {
-            var eqIndex = pair.IndexOf('=');
-
-            if (eqIndex <= 0)
-            {
-                continue;
-            }
-
-            var key = pair[..eqIndex];
-            var value = Uri.UnescapeDataString(pair[(eqIndex + 1)..]);
-
-            if (key == "code")
-            {
-                code = value;
-            }
-            else if (key == "state")
-            {
-                state = value;
-            }
-        }
-
-        return string.IsNullOrEmpty(code) || string.IsNullOrEmpty(state) ? null : state;
-    }
-
-    /// <summary>
-    /// JSON для oauth-callback: провайдер и вставленная ссылка целиком
-    /// (code и state прокси достанет из неё сам).
-    /// </summary>
-    internal static string BuildOAuthCallbackJson(string redirectUrl)
-    {
-        var request = new OAuthCallbackRequest
-        {
-            Provider = "codex",
-            RedirectUrl = redirectUrl
-        };
-
-        return JsonSerializer.Serialize(request, JsonOptions);
-    }
-
-    /// <summary>
-    /// Разбирает ответ get-auth-status. Нечитаемый ответ считается ошибкой.
-    /// </summary>
-    internal static AuthStatus ParseAuthStatusResponse(string json)
-    {
-        try
-        {
-            var response = JsonSerializer.Deserialize<AuthStatusResponse>(json, JsonOptions);
-
-            if (string.IsNullOrEmpty(response?.Status))
-            {
-                return new AuthStatus("error", "пустой ответ прокси");
-            }
-
-            return new AuthStatus(response.Status, response.Error);
-        }
-        catch (JsonException)
-        {
-            return new AuthStatus("error", "нечитаемый ответ прокси");
-        }
-    }
-
-    /// <summary>
-    /// Разбирает список auth-files, оставляя только аккаунты Codex.
-    /// </summary>
-    internal static IReadOnlyList<ChatGptAccount> ParseAuthFilesResponse(string json)
-    {
-        try
-        {
-            var response = JsonSerializer.Deserialize<AuthFilesResponse>(json, JsonOptions);
-            var result = new List<ChatGptAccount>();
-
-            foreach (var file in response?.Files ?? [])
-            {
-                if (!string.Equals(file.Provider, "codex", StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                result.Add(new ChatGptAccount(
-                    file.Name ?? "(без имени)",
-                    file.Email,
-                    file.Disabled,
-                    file.Unavailable,
-                    file.StatusMessage));
-            }
-
-            return result;
-        }
-        catch (JsonException)
-        {
-            return [];
-        }
-    }
 
     /// <summary>
     /// Проверяет флаг и настройки подключения. Пишет предупреждение, если чего-то не хватает.
@@ -581,10 +259,17 @@ public static class ChatGptClient
     }
 
     /// <summary>
-    /// POST к прокси. Возвращает тело ответа или null при ошибке (сеть, статус-код).
-    /// Наружу исключения не бросает — стиль OpenRouterClient.
+    /// Ответ прокси: тело или null при ошибке. Отдельным признаком — отказ авторизации:
+    /// он единственный, который пользователю нельзя лечить повтором запроса.
     /// </summary>
-    private static async Task<string?> PostJsonAsync(string path, string json)
+    private record ProxyResponse(string? Body, bool Unauthorized = false);
+
+    /// <summary>
+    /// POST к прокси. Наружу исключения не бросает — стиль OpenRouterClient.
+    /// <paramref name="timeout"/> ограничивает конкретный запрос: у клиента общий потолок
+    /// рассчитан на генерацию картинок и служебным запросам не годится.
+    /// </summary>
+    private static async Task<ProxyResponse> PostJsonAsync(string path, string json, TimeSpan? timeout = null)
     {
         var url = AppConfig.ChatGptProxyUrl.TrimEnd('/') + path;
 
@@ -594,7 +279,8 @@ public static class ChatGptClient
             request.Content = new StringContent(json, Encoding.UTF8, "application/json");
             request.Headers.Add("Authorization", $"Bearer {AppConfig.ChatGptProxyApiKey}");
 
-            using var response = await Http.SendAsync(request);
+            using var cts = timeout == null ? null : new CancellationTokenSource(timeout.Value);
+            using var response = await Http.SendAsync(request, cts?.Token ?? CancellationToken.None);
             var responseBody = await response.Content.ReadAsStringAsync();
 
             if (!response.IsSuccessStatusCode)
@@ -605,18 +291,19 @@ public static class ChatGptClient
                 // Умершая авторизация видна как 401/403 — подсказываем в Discord-треде
                 if (status is 401 or 403)
                 {
-                    BotLogger.LogAi(BotLogger.ChatGptThreadKey, "⚠️ Прокси вернул {Status} — проверь ключи, а если умерла авторизация Codex, выполни /chatgpt login", status);
+                    BotLogger.LogAi(BotLogger.ChatGptThreadKey, "⚠️ Прокси вернул {Status} — проверь ключи, а если умерла авторизация Codex, выполни /chatgpt-auth login", status);
+                    return new ProxyResponse(null, Unauthorized: true);
                 }
 
-                return null;
+                return new ProxyResponse(null);
             }
 
-            return responseBody;
+            return new ProxyResponse(responseBody);
         }
         catch (Exception ex)
         {
             BotLogger.Error("ChatGPT-прокси недоступен ({Url}): {Message}", url, ex.Message);
-            return null;
+            return new ProxyResponse(null);
         }
     }
 
@@ -1073,63 +760,6 @@ public static class ChatGptClient
     {
         [JsonPropertyName("url")]
         public string? Url { get; init; }
-    }
-
-    private class LoginStartResponse
-    {
-        [JsonPropertyName("status")]
-        public string? Status { get; init; }
-
-        [JsonPropertyName("url")]
-        public string? Url { get; init; }
-
-        [JsonPropertyName("state")]
-        public string? State { get; init; }
-    }
-
-    private class OAuthCallbackRequest
-    {
-        [JsonPropertyName("provider")]
-        public required string Provider { get; init; }
-
-        [JsonPropertyName("redirect_url")]
-        public required string RedirectUrl { get; init; }
-    }
-
-    private class AuthStatusResponse
-    {
-        [JsonPropertyName("status")]
-        public string? Status { get; init; }
-
-        [JsonPropertyName("error")]
-        public string? Error { get; init; }
-    }
-
-    private class AuthFilesResponse
-    {
-        [JsonPropertyName("files")]
-        public List<AuthFileEntry>? Files { get; init; }
-    }
-
-    private class AuthFileEntry
-    {
-        [JsonPropertyName("name")]
-        public string? Name { get; init; }
-
-        [JsonPropertyName("provider")]
-        public string? Provider { get; init; }
-
-        [JsonPropertyName("email")]
-        public string? Email { get; init; }
-
-        [JsonPropertyName("disabled")]
-        public bool Disabled { get; init; }
-
-        [JsonPropertyName("unavailable")]
-        public bool Unavailable { get; init; }
-
-        [JsonPropertyName("status_message")]
-        public string? StatusMessage { get; init; }
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new()

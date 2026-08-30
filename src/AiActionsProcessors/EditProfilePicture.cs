@@ -60,6 +60,10 @@ public static class EditProfilePicture
 
         if (target is null)
         {
+            // Действие уже сработало и сообщение потреблено: промолчать здесь — значит
+            // выглядеть сломанным ботом. Такое бывает, когда упомянутый покинул сервер
+            BotLogger.Warning("Правка аватарки: упомянутый пользователь {UserId} не найден на сервере", targetId);
+            _ = await MediaReply.SendEmbedAsync(message, BotEmbeds.Error(BotMessages.AiActionUserNotFound()));
             return;
         }
 
@@ -68,7 +72,7 @@ public static class EditProfilePicture
 
         if (avatar == null)
         {
-            await SendAsync(message, BotEmbeds.Error(BotMessages.AiActionAvatarFailed(DiscordMentions.DisplayNameOf(target))));
+            _ = await MediaReply.SendEmbedAsync(message, BotEmbeds.Error(BotMessages.AiActionAvatarFailed(DiscordMentions.DisplayNameOf(target))));
             return;
         }
 
@@ -165,18 +169,4 @@ public static class EditProfilePicture
         }
     }
 
-    private static async Task SendAsync(SocketUserMessage message, Embed embed)
-    {
-        try
-        {
-            await message.Channel.SendMessageAsync(
-                embed: embed,
-                allowedMentions: AllowedMentions.None,
-                messageReference: new MessageReference(message.Id, failIfNotExists: false));
-        }
-        catch (Exception ex)
-        {
-            BotLogger.Error("Не удалось отправить сообщение действия: {Message}", ex.Message);
-        }
-    }
 }

@@ -1,4 +1,4 @@
-using Discord;
+﻿using Discord;
 using Discord.Interactions;
 using MewoDiscord.Helpers;
 using MewoDiscord.Utils;
@@ -13,7 +13,7 @@ namespace MewoDiscord.Commands;
 /// </summary>
 [Group("chatgpt-auth", "Авторизация ChatGPT (для админов)")]
 [DefaultMemberPermissions(GuildPermission.Administrator)]
-public class ChatGptCommands : InteractionModuleBase<SocketInteractionContext>
+public class ChatGptAuthCommands : InteractionModuleBase<SocketInteractionContext>
 {
     private const string PasteButtonId = "chatgpt_login_paste";
     private const string LoginModalId = "chatgpt_login_modal";
@@ -23,9 +23,9 @@ public class ChatGptCommands : InteractionModuleBase<SocketInteractionContext>
     {
         await DeferAsync(ephemeral: true);
 
-        var start = await ChatGptClient.BeginLoginAsync();
+        var start = await ChatGptAuthClient.BeginLoginAsync();
 
-        BotLogger.LogCommand("/chatgpt login — {User}: {Result}", Context.User.Username, start == null ? "не удалось начать" : "ссылка выдана");
+        BotLogger.LogCommand("/chatgpt-auth login — {User}: {Result}", Context.User.Username, start == null ? "не удалось начать" : "ссылка выдана");
 
         if (start == null)
         {
@@ -48,9 +48,9 @@ public class ChatGptCommands : InteractionModuleBase<SocketInteractionContext>
     {
         await DeferAsync(ephemeral: true);
 
-        var accounts = await ChatGptClient.GetAccountsAsync();
+        var accounts = await ChatGptAuthClient.GetAccountsAsync();
 
-        BotLogger.LogCommand("/chatgpt status — {User}: аккаунтов {Count}", Context.User.Username, accounts?.Count.ToString() ?? "н/д");
+        BotLogger.LogCommand("/chatgpt-auth status — {User}: аккаунтов {Count}", Context.User.Username, accounts?.Count.ToString() ?? "н/д");
 
         if (accounts == null)
         {
@@ -97,9 +97,9 @@ public class ChatGptCommands : InteractionModuleBase<SocketInteractionContext>
     {
         await DeferAsync(ephemeral: true); // ack в пределах 3 секунд — до любых HTTP-вызовов
 
-        var result = await ChatGptClient.CompleteLoginAsync(modal.RedirectUrl.Trim());
+        var result = await ChatGptAuthClient.CompleteLoginAsync(modal.RedirectUrl.Trim());
 
-        BotLogger.LogCommand("/chatgpt login (вставка ссылки) — {User}: {Result}", Context.User.Username, result.Ok ? "успех" : result.Error ?? "ошибка");
+        BotLogger.LogCommand("/chatgpt-auth login (вставка ссылки) — {User}: {Result}", Context.User.Username, result.Ok ? "успех" : result.Error ?? "ошибка");
 
         await FollowupAsync(
             embed: result.Ok

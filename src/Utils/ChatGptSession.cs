@@ -41,7 +41,13 @@ public class ChatGptSession
     }
 
     /// <summary>
-    /// Дописывает ход в историю, вытесняя самые старые сверх лимита.
+    /// Дописывает ход в историю, вытесняя самые старые сверх лимита и снимая картинки
+    /// со всех ходов, кроме последних <see cref="ChatGptClient.MaxImageTurns"/>.
+    /// Картинки хранятся в истории целиком, base64-строками, и уходят в запрос при каждом
+    /// следующем обмене: без чистки пара присланных фотографий раздувала бы и запрос,
+    /// и json состояния до десятков мегабайт, пока прокси не начнёт отвергать их вовсе.
+    /// О чём шла речь, история помнит и без них — служебная строка «приложил изображения»
+    /// остаётся в тексте хода.
     /// </summary>
     internal void Append(ChatGptClient.ChatTurn turn)
     {
@@ -51,6 +57,14 @@ public class ChatGptSession
         while (History.Count > ChatGptClient.MaxHistoryTurns)
         {
             History.RemoveAt(0);
+        }
+
+        for (var i = 0; i < History.Count - ChatGptClient.MaxImageTurns; i++)
+        {
+            if (History[i].ImageDataUrls.Count > 0)
+            {
+                History[i] = History[i] with { ImageDataUrls = [] };
+            }
         }
     }
 }

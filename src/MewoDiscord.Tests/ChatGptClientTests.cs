@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using MewoDiscord.Helpers;
 using MewoDiscord.Utils;
 
@@ -352,6 +352,92 @@ public class ChatGptClientTests
     }
 
     [Fact]
+    public void Gpt_КартинкиОстаютсяТолькоУПоследнихХодов()
+    {
+        var session = new ChatGptSession();
+
+        for (var i = 0; i < ChatGptClient.MaxImageTurns + 3; i++)
+        {
+            session.Append(new ChatGptClient.ChatTurn("user", $"ход {i}", ["data:image/png;base64,AAA"]));
+        }
+
+        var withImages = session.History.Count(turn => turn.ImageDataUrls.Count > 0);
+
+        Assert.Equal(ChatGptClient.MaxImageTurns, withImages);
+
+        // Картинки сняты со старых ходов, а сами ходы и их текст на месте
+        Assert.Empty(session.History[0].ImageDataUrls);
+        Assert.Equal("ход 0", session.History[0].Text);
+        Assert.NotEmpty(session.History[^1].ImageDataUrls);
+    }
+
+    [Fact]
+    public void Gpt_ЗапросНеТащитКартинкиИзДавнейИстории()
+    {
+        var session = new ChatGptSession();
+
+        // Метки латиницей: сериализатор экранирует кириллицу в \uXXXX, и поиск
+        // по подстроке ничего бы не нашёл ни в одном случае
+        for (var i = 0; i < ChatGptClient.MaxImageTurns + 2; i++)
+        {
+            session.Append(new ChatGptClient.ChatTurn("user", $"ход {i}", [$"data:image/png;base64,IMG{i}"]));
+        }
+
+        var json = ChatGptClient.BuildChatRequestJson(
+            "gpt-5.5", 100, session.History, new ChatGptClient.ChatTurn("user", "новый вопрос", []));
+
+        Assert.DoesNotContain("IMG0", json);
+        Assert.DoesNotContain("IMG1", json);
+        Assert.Contains("IMG5", json);
+    }
+
+    [Theory]
+    [InlineData(1999)]
+    [InlineData(2000)]
+    public void Gpt_ТекстВЛимитНеРежется(int length)
+    {
+        var chunks = BotLogger.SplitMessage(new string('я', length));
+
+        Assert.Single(chunks);
+        Assert.Equal(length, chunks[0].Length);
+    }
+
+    [Fact]
+    public void Gpt_ТекстБезПереносовРежетсяПоЛимиту()
+    {
+        var chunks = BotLogger.SplitMessage(new string('я', 2001));
+
+        Assert.Equal(2, chunks.Count);
+        Assert.Equal(2000, chunks[0].Length);
+        Assert.Single(chunks[1]);
+    }
+
+    [Fact]
+    public void Gpt_ДлинныйТекстРежетсяПоПоследнемуПереносу()
+    {
+        var text = new string('а', 1500) + "\n" + new string('б', 600);
+
+        var chunks = BotLogger.SplitMessage(text);
+
+        Assert.Equal(2, chunks.Count);
+        Assert.Equal(1500, chunks[0].Length);
+        Assert.Equal(600, chunks[1].Length);
+    }
+
+    [Fact]
+    public void Gpt_ЧанкиОтветаВлезаютВЛимитИНеТеряютТекст()
+    {
+        // Сплошные переносы — вырожденный случай: TrimStart их съедает, но зациклиться
+        // и выдать пустой чанк резка не должна ни при каких входных данных
+        var text = new string('\n', 2500) + "конец";
+
+        var chunks = BotLogger.SplitMessage(text);
+
+        Assert.All(chunks, chunk => Assert.InRange(chunk.Length, 1, 2000));
+        Assert.Contains(chunks, chunk => chunk.Contains("конец"));
+    }
+
+    [Fact]
     public void Gpt_СбросСессииЧиститВсё()
     {
         var session = new ChatGptSession();
@@ -377,95 +463,10 @@ public class ChatGptClientTests
         Assert.DoesNotContain("\"role\":\"system\"", withoutPrompt);
     }
 
-    [Fact]
-    public void Gpt_СсылкаЛогинаРазбирается()
-    {
-        const string json = """{"status":"ok","url":"https://auth.openai.com/oauth/authorize?x=1","state":"abc123"}""";
-        var start = ChatGptClient.ParseLoginStartResponse(json);
-
-        Assert.NotNull(start);
-        Assert.Equal("https://auth.openai.com/oauth/authorize?x=1", start.Url);
-        Assert.Equal("abc123", start.State);
-
-        Assert.Null(ChatGptClient.ParseLoginStartResponse("""{"status":"ok"}"""));
-        Assert.Null(ChatGptClient.ParseLoginStartResponse("не json"));
-    }
-
-    [Theory]
-    [InlineData("http://localhost:1455/auth/callback?code=ac_XXX&state=st_YYY", "st_YYY")]
-    [InlineData("http://localhost:1455/auth/callback?state=st%2FYYY&code=ac", "st/YYY")]
-    [InlineData("http://localhost:1455/auth/callback?code=ac_XXX", null)]
-    [InlineData("http://localhost:1455/auth/callback?state=st_YYY", null)]
-    [InlineData("просто текст без ссылки", null)]
-    public void Gpt_StateИзвлекаетсяИзRedirectUrl(string url, string? expected)
-    {
-        Assert.Equal(expected, ChatGptClient.ExtractStateFromRedirectUrl(url));
-    }
-
-    [Fact]
-    public void Gpt_CallbackJsonСодержитProviderИUrl()
-    {
-        var json = ChatGptClient.BuildOAuthCallbackJson("http://localhost:1455/auth/callback?code=1&state=2");
-
-        Assert.Contains("\"provider\":\"codex\"", json);
-        Assert.Contains("\"redirect_url\":\"http://localhost:1455/auth/callback?code=1\\u0026state=2\"", json);
-    }
-
-    [Fact]
-    public void Gpt_СтатусАвторизацииРазбирается()
-    {
-        Assert.Equal("ok", ChatGptClient.ParseAuthStatusResponse("""{"status":"ok"}""").Status);
-        Assert.Equal("wait", ChatGptClient.ParseAuthStatusResponse("""{"status":"wait"}""").Status);
-
-        var error = ChatGptClient.ParseAuthStatusResponse("""{"status":"error","error":"unknown or expired state"}""");
-        Assert.Equal("error", error.Status);
-        Assert.Equal("unknown or expired state", error.Error);
-
-        Assert.Equal("error", ChatGptClient.ParseAuthStatusResponse("не json").Status);
-    }
-
-    [Fact]
-    public void Gpt_СписокАккаунтовФильтруетсяПоCodex()
-    {
-        const string json = """
-            {"files":[
-                {"name":"codex-user.json","provider":"codex","email":"u@e.com","disabled":false,"unavailable":false},
-                {"name":"claude-x.json","provider":"claude","email":"other@e.com"},
-                {"name":"codex-dead.json","provider":"codex","unavailable":true,"status_message":"token expired"}
-            ]}
-            """;
-
-        var accounts = ChatGptClient.ParseAuthFilesResponse(json);
-
-        Assert.Equal(2, accounts.Count);
-        Assert.Equal("u@e.com", accounts[0].Email);
-        Assert.False(accounts[0].Unavailable);
-        Assert.True(accounts[1].Unavailable);
-        Assert.Equal("token expired", accounts[1].StatusMessage);
-
-        Assert.Empty(ChatGptClient.ParseAuthFilesResponse("не json"));
-    }
 
     // ====================================================================
     // Живые тесты: нужен поднятый CLIProxyAPI и UseChatGpt: true в config.ini
     // ====================================================================
-
-    /// <summary>
-    /// Живой список аккаунтов через management API (нужен MANAGEMENT_PASSWORD у прокси).
-    /// </summary>
-    [Fact]
-    public async Task АИ_ГптСписокАккаунтов()
-    {
-        var accounts = await ChatGptClient.GetAccountsAsync();
-
-        Assert.NotNull(accounts);
-        _testOutputHelper.WriteLine($"Аккаунтов: {accounts.Count}");
-
-        foreach (var account in accounts)
-        {
-            _testOutputHelper.WriteLine($"• {account.Name} {account.Email} unavailable={account.Unavailable}");
-        }
-    }
 
     /// <summary>
     /// Живой чат через прокси: короткий вопрос — непустой ответ.
