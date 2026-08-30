@@ -168,8 +168,17 @@ public static class FfmpegRunner
     /// <summary>
     /// Результат — путь к файлу внутри рабочего каталога либо причина отказа
     /// для пользователя. Ошибки наружу не бросаются.
+    /// <paramref name="TruncatedSeconds"/> — до скольких секунд потолок обработки урезал
+    /// результат, о котором пользователь ничего такого не просил (0 — не урезал).
     /// </summary>
-    public record MediaResult(string? FilePath, string? FileName, string? Error);
+    public record MediaResult(string? FilePath, string? FileName, string? Error, double TruncatedSeconds = 0);
+
+    /// <summary>
+    /// Длительность неподвижной картинки. Ровный ноль не годится: ffprobe отдаёт
+    /// для одиночного кадра около одной сороковой секунды, и строгая проверка считала бы
+    /// обычное фото видео — а видео и картинка расходятся дальше по всей обработке.
+    /// </summary>
+    internal const double MaxStillSeconds = 1;
 
     /// <summary>
     /// Выполняет план над файлом. Имя результата строится от displayName —
@@ -185,17 +194,34 @@ public static class FfmpegRunner
     {
         var format = plan.AudioOnly
             ? ResolveAudioFormat(plan.Format, info.Audio)
-            : ResolveFormat(plan.Format, displayName, info.DurationSeconds > 0);
+            : ResolveFormat(plan.Format, displayName, info.DurationSeconds >= MaxStillSeconds);
 
         if (format == null)
         {
             return new MediaResult(null, null, BotMessages.MediaFormatNotSupported(plan.Format ?? "?"));
         }
 
+        var caps = limits ?? MediaLimits.Chat(format);
         var outputPath = workspace.PathFor("result." + format);
         var arguments = BuildArguments(plan, info, format, inputPath, outputPath, limits);
+        var result = await ExecuteAsync(workspace, arguments, outputPath, displayName, format);
 
-        return await ExecuteAsync(workspace, arguments, outputPath, displayName, format);
+        return result with { TruncatedSeconds = TruncatedBy(plan, info, caps) };
+    }
+
+    /// <summary>
+    /// До скольких секунд потолок обработки урезал результат там, где обрезки не просили.
+    /// 0 — не урезал или обрезку задал сам пользователь: про свой же отрезок ему говорить
+    /// нечего, а вот молча потерянный хвост восьмиминутного видео выглядит поломкой.
+    /// </summary>
+    private static double TruncatedBy(MediaPlan plan, MediaInfo info, MediaLimits caps)
+    {
+        if (plan.Start.HasValue || plan.End.HasValue || info.DurationSeconds <= 0)
+        {
+            return 0;
+        }
+
+        return info.DurationSeconds > caps.MaxSeconds ? caps.MaxSeconds : 0;
     }
 
     /// <summary>

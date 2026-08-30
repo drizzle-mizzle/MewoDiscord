@@ -17,6 +17,17 @@ internal static class DiscordLimits
         $"{bytes / 1024d / 1024d:F1} МБ";
 
     /// <summary>
+    /// Длительность медиафайла человеку: «7:12», у длинного — «1:07:12». Это формат
+    /// плеера, а не журнала голосовых: там разговор меряется словами «1ч 2мин».
+    /// </summary>
+    internal static string FormatDuration(double seconds)
+    {
+        var span = TimeSpan.FromSeconds(seconds);
+
+        return span.TotalHours >= 1 ? span.ToString(@"h\:mm\:ss") : span.ToString(@"m\:ss");
+    }
+
+    /// <summary>
     /// Потолок вложения: зависит от уровня буста сервера. Запасное значение задаёт
     /// вызывающий — оно разное у постов соцсетей и у медиа-действий.
     /// </summary>

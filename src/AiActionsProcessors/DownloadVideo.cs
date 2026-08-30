@@ -31,6 +31,11 @@ public static partial class DownloadVideo
     private const int MaxFileNameLength = 64;
 
     /// <summary>
+    /// Чем занят слот медиа, пока идёт качание: это видит тот, кому слота не хватило.
+    /// </summary>
+    private const string BusyDescription = "качаю видео с YouTube";
+
+    /// <summary>
     /// Список полей плана для видео, которого мы ещё не видели: кроп сюда не входит —
     /// размеры кадра до скачивания неизвестны, и посчитать его модель не может.
     /// </summary>
@@ -61,21 +66,16 @@ public static partial class DownloadVideo
             return;
         }
 
-        // Ждать бессмысленно: впереди у занявшего слот могут быть минуты качания
-        using var workspace = await MediaWorkspace.TryAcquireAsync(MediaWorkspace.DownloadGrace);
+        // Разведка YouTube и разбор просьбы занимают секунды, и всё это время
+        // пользователь должен видеть, что бот занят его просьбой
+        using var typing = message.Channel.EnterTypingState();
 
-        if (workspace == null)
-        {
-            await MediaReply.SendEmbedAsync(message, BotEmbeds.Warning(BotMessages.MediaBusy()));
-            return;
-        }
-
-        await ProcessAsync(context, videoId, workspace);
+        await ProcessAsync(context, videoId);
     }
 
     #region Internals
 
-    private static async Task ProcessAsync(CustomAiActionContext context, string videoId, MediaWorkspace workspace)
+    private static async Task ProcessAsync(CustomAiActionContext context, string videoId)
     {
         var message = context.Message;
         var clock = Stopwatch.StartNew();
@@ -107,12 +107,22 @@ public static partial class DownloadVideo
         {
             await MediaReply.SendEmbedAsync(
                 message,
-                BotEmbeds.Warning(BotMessages.YoutubeTooLong(Duration(meta.DurationSeconds), Duration(maxDuration))));
+                BotEmbeds.Warning(BotMessages.YoutubeTooLong(DiscordLimits.FormatDuration(meta.DurationSeconds), DiscordLimits.FormatDuration(maxDuration))));
 
             return;
         }
 
         var plan = await AskPlanAsync(context.Text, meta);
+
+        // Модель не ответила вовсе — это сбой, а не «скачай целиком»: пустой план увёз бы
+        // на YouTube за полным роликом вместо запрошенного отрезка, и пользователь получил
+        // бы гигабайты не того, о чём просил, без единого слова об ошибке
+        if (plan == null)
+        {
+            await MediaReply.SendEmbedAsync(message, BotEmbeds.Error(BotMessages.MediaPlanFailed()));
+            return;
+        }
+
         var section = ResolveSection(plan, meta.DurationSeconds);
         var outputSeconds = section == null ? meta.DurationSeconds : section.Value.End - section.Value.Start;
 
@@ -142,6 +152,17 @@ public static partial class DownloadVideo
             return;
         }
 
+        // Слот берётся только здесь: всё, что было выше, диском не пользуется, а держать
+        // его во время разведки и похода в модель значит впустую отказывать чужой обрезке.
+        // Ждать бессмысленно: впереди у занявшего слот могут быть минуты качания
+        using var workspace = await MediaWorkspace.TryAcquireAsync(MediaWorkspace.DownloadGrace, BusyDescription);
+
+        if (workspace == null)
+        {
+            await MediaReply.SendEmbedAsync(message, BotEmbeds.Warning(BotMessages.MediaBusy(MediaWorkspace.BusyWith)));
+            return;
+        }
+
         if (!workspace.HasRoomFor(choice.EstimatedBytes))
         {
             await MediaReply.SendEmbedAsync(message, BotEmbeds.Warning(BotMessages.YoutubeNoRoom()));
@@ -154,7 +175,7 @@ public static partial class DownloadVideo
 
         try
         {
-            await DeliverAsync(context, videoId, workspace, meta, plan, section, choice, uploadLimit, outputSeconds, clock);
+            await DeliverAsync(context, videoId, workspace, meta, plan, section, choice, uploadLimit, outputSeconds, clock, progress);
         }
         finally
         {
@@ -172,7 +193,8 @@ public static partial class DownloadVideo
         YtDlpRunner.Choice choice,
         long uploadLimit,
         double outputSeconds,
-        Stopwatch clock)
+        Stopwatch clock,
+        IUserMessage? progress)
     {
         var message = context.Message;
         using var typing = message.Channel.EnterTypingState();
@@ -196,12 +218,14 @@ public static partial class DownloadVideo
 
         // Огрызок недокачанного файла ffprobe читает успешно и уверенно врёт про длину,
         // а на этой длине держится вся математика пережатия
-        if (!DurationMatches(info.DurationSeconds, outputSeconds))
+        var expectedSeconds = ExpectedSeconds(section != null, choice.Manifest, meta.DurationSeconds, outputSeconds);
+
+        if (!DurationMatches(info.DurationSeconds, expectedSeconds))
         {
             BotLogger.Warning(
                 "Скачанный файл идёт {Actual} с вместо {Expected} с — считаю качание неудачным",
                 info.DurationSeconds,
-                outputSeconds);
+                expectedSeconds);
 
             await MediaReply.SendEmbedAsync(message, BotEmbeds.Error(BotMessages.YoutubeFailed()));
             return;
@@ -235,6 +259,13 @@ public static partial class DownloadVideo
         else
         {
             displayName = Path.GetFileNameWithoutExtension(displayName) + Path.GetExtension(source);
+        }
+
+        // Пережатие идёт кругами по двадцать минут, и всё это время карточка «качаю»
+        // врала бы: качание давно кончилось
+        if (new FileInfo(working).Length > Target(uploadLimit))
+        {
+            await MediaReply.EditEmbedAsync(progress, BotEmbeds.Info(BotMessages.YoutubeCompressing()));
         }
 
         var (result, shrunk) = await ShrinkAsync(workspace, working, info, uploadLimit, outputSeconds, clock, displayName);
@@ -377,7 +408,7 @@ public static partial class DownloadVideo
         return (null, true);
     }
 
-    private static MediaShrink.ShrinkKind ResolveKind(string format)
+    internal static MediaShrink.ShrinkKind ResolveKind(string format)
     {
         if (format == "gif")
         {
@@ -391,9 +422,10 @@ public static partial class DownloadVideo
 
     /// <summary>
     /// Переводит свободную фразу в план операции. Просто «скачай» даёт пустой план —
-    /// это нормально и означает «отдай как есть».
+    /// это нормально и означает «отдай как есть». null — модель не ответила вовсе
+    /// (прокси лежит или не успел): это сбой, и качать по нему нельзя.
     /// </summary>
-    private static async Task<FfmpegRunner.MediaPlan> AskPlanAsync(string text, YtDlpRunner.VideoMeta meta)
+    private static async Task<FfmpegRunner.MediaPlan?> AskPlanAsync(string text, YtDlpRunner.VideoMeta meta)
     {
         var answer = await ChatGptClient.AskInstantAsync(
             $"{MediaPlanParser.PromptHeader}\n\n{PlanFields}\n\n"
@@ -402,6 +434,12 @@ public static partial class DownloadVideo
 
         BotLogger.LogAi(BotLogger.ChatGptThreadKey, "📺 План для {Title}: {Plan}", meta.Title, answer);
 
+        if (string.IsNullOrWhiteSpace(answer))
+        {
+            return null;
+        }
+
+        // Ответ есть, но плана в нём не видно — просьба не механическая, качаем как есть
         return MediaPlanParser.Parse(answer) ?? new FfmpegRunner.MediaPlan();
     }
 
@@ -409,7 +447,7 @@ public static partial class DownloadVideo
     /// Отрезок, который просили. Качать его отрезком — главный выигрыш всей затеи:
     /// полминуты из трёхчасового ролика это мегабайты, а не гигабайты.
     /// </summary>
-    private static (double Start, double End)? ResolveSection(FfmpegRunner.MediaPlan plan, double duration)
+    internal static (double Start, double End)? ResolveSection(FfmpegRunner.MediaPlan plan, double duration)
     {
         if (plan.Start == null && plan.End == null)
         {
@@ -426,7 +464,16 @@ public static partial class DownloadVideo
     /// Сошлась ли длительность скачанного с ожидаемой. Допуск нужен: точный рез
     /// двигает границы к ближайшим кадрам, а контейнер округляет длительность.
     /// </summary>
-    private static bool DurationMatches(double actual, double expected) =>
+    /// <summary>
+    /// Какой длины ждать скачанный файл. Обычную ступень yt-dlp качает отрезком, а поток
+    /// из манифеста вырезать не умеет — оттуда приедет весь ролик, и режет его потом
+    /// ffmpeg у нас. Ждать от такого файла длину отрезка значит всегда считать
+    /// удавшееся качание неудачным.
+    /// </summary>
+    internal static double ExpectedSeconds(bool hasSection, bool manifest, double fullSeconds, double outputSeconds) =>
+        hasSection && manifest ? fullSeconds : outputSeconds;
+
+    internal static bool DurationMatches(double actual, double expected) =>
         expected <= 0 || Math.Abs(actual - expected) <= Math.Max(2, expected * 0.1);
 
     /// <summary>
@@ -440,8 +487,8 @@ public static partial class DownloadVideo
         var container = Path.GetExtension(path).TrimStart('.').ToUpperInvariant();
 
         var resolution = info.Video == null
-            ? Duration(info.DurationSeconds)
-            : $"{info.Video.Width}×{info.Video.Height}, {info.Video.Fps:0.#} к/с, {Duration(info.DurationSeconds)}";
+            ? DiscordLimits.FormatDuration(info.DurationSeconds)
+            : $"{info.Video.Width}×{info.Video.Height}, {info.Video.Fps:0.#} к/с, {DiscordLimits.FormatDuration(info.DurationSeconds)}";
 
         var video = info.Video == null ? "—" : $"{info.Video.Codec} {Bitrate(info.Video.BitrateBps)}";
 
@@ -462,6 +509,9 @@ public static partial class DownloadVideo
         YtDlpRunner.YtDlpFailure.Unavailable => BotMessages.YoutubeUnavailable(),
         YtDlpRunner.YtDlpFailure.Outdated => BotMessages.YoutubeToolOutdated(),
         YtDlpRunner.YtDlpFailure.JsRuntime => BotMessages.YoutubeJsRuntime(),
+        YtDlpRunner.YtDlpFailure.TooBig => BotMessages.YoutubeTooBig(
+            DiscordLimits.FormatSize((long)AppConfig.MediaSettings.MaxSourceMb * 1024 * 1024)),
+        YtDlpRunner.YtDlpFailure.NoRoom => BotMessages.YoutubeNoRoom(),
         _ => BotMessages.YoutubeFailed()
     };
 
@@ -475,7 +525,7 @@ public static partial class DownloadVideo
     /// Имя файла для чата из заголовка видео. В заголовках бывают слэши, юникод
     /// и двести символов, поэтому от него остаётся только безопасная часть.
     /// </summary>
-    private static string SafeName(string title)
+    internal static string SafeName(string title)
     {
         var name = UnsafeFileCharsRegex().Replace(title, string.Empty).Trim();
 
@@ -499,13 +549,6 @@ public static partial class DownloadVideo
         2 => "стерео",
         _ => $"{channels} канала"
     };
-
-    private static string Duration(double seconds)
-    {
-        var span = TimeSpan.FromSeconds(seconds);
-
-        return span.TotalHours >= 1 ? span.ToString(@"h\:mm\:ss") : span.ToString(@"m\:ss");
-    }
 
     [GeneratedRegex("""[\\/:*?"<>|\r\n]""")]
     private static partial Regex UnsafeFileCharsRegex();

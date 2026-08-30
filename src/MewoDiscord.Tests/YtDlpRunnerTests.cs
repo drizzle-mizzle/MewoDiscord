@@ -275,6 +275,24 @@ public class YtDlpRunnerTests
     }
 
     [Fact]
+    public void Media_ОценкаМанифестаНеУменьшаетсяПодОтрезок()
+    {
+        // Отрезок манифесту не вырезать: качается весь файл, и оценка должна быть полной,
+        // иначе и качество выберется не то, и место проверится по заниженной цифре
+        var ladder = new List<YtDlpRunner.Rung>
+        {
+            new(1080, 40_000_000, SizeKnown: true, Manifest: true),
+            new(360, 6_000_000, SizeKnown: true, Manifest: false)
+        };
+
+        var choice = YtDlpRunner.Choose(ladder, Limit50Mb, hardCap: 2_000_000_000, portion: 0.1);
+
+        Assert.NotNull(choice);
+        Assert.Equal(1080, choice.Height);
+        Assert.Equal(40_000_000, choice.EstimatedBytes);
+    }
+
+    [Fact]
     public void Media_ДополнительныеАргументыРазбиваютсяПоПробельным()
     {
         Assert.Equal(

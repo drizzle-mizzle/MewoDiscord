@@ -52,6 +52,29 @@ public class FfmpegRunnerTests
     }
 
     [Fact]
+    public void Media_КонвертацияДлинногоВидеоУсекаетсяПотолком()
+    {
+        // Потолок обработки клипа из чата — пять минут; восьмиминутное видео обрежется,
+        // и об этом обязана появиться сноска (сам факт усечения проверяется отдельно)
+        var args = Args(new FfmpegRunner.MediaPlan(), "mp4", new FfmpegRunner.MediaInfo(1920, 1080, 480));
+
+        Assert.Contains("-t 300", args);
+    }
+
+    [Theory]
+    [InlineData(0.04, "png")]   // ffprobe отдаёт для одиночного кадра сороковую долю секунды
+    [InlineData(0, "png")]
+    [InlineData(30, "mp4")]
+    public void Media_ФорматПоУмолчаниюЗависитОтНеподвижности(double duration, string expected)
+    {
+        // Фото в формате вне белого списка (.heic с телефона) обязано стать картинкой,
+        // а не одно-кадровым видео
+        var format = FfmpegRunner.ResolveFormat(null, "photo.heic", duration >= FfmpegRunner.MaxStillSeconds);
+
+        Assert.Equal(expected, format);
+    }
+
+    [Fact]
     public void Media_КропЗажимаетсяВГраницыКадра()
     {
         var clamped = FfmpegRunner.ClampCrop(new FfmpegRunner.CropBox(1800, 1000, 500, 500), Source);

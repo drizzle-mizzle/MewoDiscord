@@ -38,7 +38,19 @@ public sealed class MediaWorkspace : IDisposable
 
     private static readonly SemaphoreSlim Slot = new(1, 1);
 
+    /// <summary>
+    /// Чем занят слот прямо сейчас. Пишется и чистится только под захваченным слотом,
+    /// поэтому читателю достаётся либо актуальное описание, либо «свободно».
+    /// </summary>
+    private static volatile string? _busy;
+
     private int _released;
+
+    /// <summary>
+    /// Описание текущей операции для отказа тому, кому слота не хватило: «занят» без
+    /// объяснения выглядит зависанием, а ждать может понадобиться и полчаса.
+    /// </summary>
+    public static string BusyWith => _busy ?? "другим файлом";
 
     private MediaWorkspace(string fullPath)
     {
@@ -64,13 +76,16 @@ public sealed class MediaWorkspace : IDisposable
 
     /// <summary>
     /// Занимает слот и выдаёт чистый каталог. null — слот занят другой операцией.
+    /// <paramref name="what"/> — чем заняли слот, это увидит следующий за нами.
     /// </summary>
-    public static async Task<MediaWorkspace?> TryAcquireAsync(TimeSpan wait)
+    public static async Task<MediaWorkspace?> TryAcquireAsync(TimeSpan wait, string what)
     {
         if (!await Slot.WaitAsync(wait))
         {
             return null;
         }
+
+        _busy = what;
 
         try
         {
@@ -84,6 +99,7 @@ public sealed class MediaWorkspace : IDisposable
         catch
         {
             // Каталог не создался — значит и слот не наш
+            _busy = null;
             Slot.Release();
             throw;
         }
@@ -136,6 +152,7 @@ public sealed class MediaWorkspace : IDisposable
         }
 
         ForceDelete(FullPath);
+        _busy = null;
         Slot.Release();
     }
 

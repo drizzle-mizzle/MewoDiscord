@@ -202,8 +202,14 @@ public static class BotMessages
     public static string MediaFailed() =>
         Format(nameof(MediaFailed));
 
-    public static string MediaBusy() =>
-        Format(nameof(MediaBusy));
+    public static string MediaBusy(string what) =>
+        Format(nameof(MediaBusy), ("{what}", what));
+
+    public static string MediaPlanFailed() =>
+        Format(nameof(MediaPlanFailed));
+
+    public static string MediaTruncated(string seconds) =>
+        Format(nameof(MediaTruncated), ("{seconds}", seconds));
 
     public static string MediaShrinkFailed(string limit) =>
         Format(nameof(MediaShrinkFailed), ("{limit}", limit));
@@ -222,6 +228,9 @@ public static class BotMessages
 
     public static string YoutubeDownloading(string quality) =>
         Format(nameof(YoutubeDownloading), ("{quality}", quality));
+
+    public static string YoutubeCompressing() =>
+        Format(nameof(YoutubeCompressing));
 
     public static string YoutubeMeta(string container, string resolution, string video, string audio) =>
         Format(

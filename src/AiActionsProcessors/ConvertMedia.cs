@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 
 using Discord;
 using Discord.WebSocket;
@@ -38,11 +38,9 @@ public static class ConvertMedia
     private const int MaxModelImageSide = 1536;
 
     /// <summary>
-    /// До какой длительности файл считается неподвижной картинкой. Ноль тут не годится:
-    /// ffprobe отдаёт для одиночного кадра длительность в одну сороковую секунды,
-    /// и проверка «строго ноль» отбраковывала обычный jpg с телефона.
+    /// Чем занят слот медиа, пока идёт операция: это видит тот, кому слота не хватило.
     /// </summary>
-    private const double MaxStillSeconds = 1;
+    private const string BusyDescription = "обрабатываю файл из чата";
 
     /// <summary>
     /// Список полей плана для файла, который видно: кроп здесь осмыслен, потому что
@@ -161,6 +159,10 @@ public static class ConvertMedia
         FfmpegRunner.MediaPlan? previous,
         ulong? previousAnchorId)
     {
+        // Скачивание файла, ffprobe и поход в модель за планом занимают десятки секунд —
+        // всё это время пользователь должен видеть, что бот занят его просьбой
+        using var typing = message.Channel.EnterTypingState();
+
         // Потолок входа — лимит вложений сервера, а не константа: свой же результат
         // на буст-тире бывает крупнее её, и круг правок упирался бы в отказ на ровном месте
         var limit = UploadLimit(message);
@@ -172,11 +174,11 @@ public static class ConvertMedia
         }
 
         // Слот занят другой операцией — ждать за чужим качанием видео бессмысленно
-        using var workspace = await MediaWorkspace.TryAcquireAsync(MediaWorkspace.ConvertGrace);
+        using var workspace = await MediaWorkspace.TryAcquireAsync(MediaWorkspace.ConvertGrace, BusyDescription);
 
         if (workspace == null)
         {
-            await ReplyAsync(message, BotEmbeds.Warning(BotMessages.MediaBusy()));
+            await ReplyAsync(message, BotEmbeds.Warning(BotMessages.MediaBusy(MediaWorkspace.BusyWith)));
             return;
         }
 
@@ -196,7 +198,15 @@ public static class ConvertMedia
             return;
         }
 
-        var plan = await AskPlanAsync(text, source.FileName, info, previous);
+        var (plan, modelAnswered) = await AskPlanAsync(text, source.FileName, info, previous);
+
+        // Модель промолчала вовсе — это сбой сети или прокси, а не «просьба не механическая»:
+        // молча увозить такую просьбу в чат к той же неотвечающей модели незачем
+        if (!modelAnswered)
+        {
+            await ReplyAsync(message, BotEmbeds.Error(BotMessages.MediaPlanFailed()));
+            return;
+        }
 
         // Пустой план — надёжный признак, что просьба не механическая: его вернула та же
         // модель, которой перечислен весь список операций. «Вырежи персонажа с фона»
@@ -223,8 +233,6 @@ public static class ConvertMedia
             return;
         }
 
-        using var typing = message.Channel.EnterTypingState();
-
         var result = await FfmpegRunner.RunAsync(workspace, inputPath, source.FileName, plan, info);
 
         if (result.FilePath == null)
@@ -241,9 +249,15 @@ public static class ConvertMedia
             return;
         }
 
+        // Потолок обработки мог отрезать хвост, о котором не просили: молча отдать
+        // первые пять минут восьмиминутного видео — значит выглядеть сломанным
+        var note = result.TruncatedSeconds > 0
+            ? BotMessages.MediaTruncated(DiscordLimits.FormatDuration(result.TruncatedSeconds))
+            : null;
+
         // Отправка обязана закончиться внутри using: вложение читается с диска потоком,
         // а Dispose рабочего каталога сносит файл
-        var sent = await MediaReply.SendFileAsync(message, result.FilePath, result.FileName!);
+        var sent = await MediaReply.SendFileAsync(message, result.FilePath, result.FileName!, note);
 
         if (sent != null)
         {
@@ -272,7 +286,7 @@ public static class ConvertMedia
     /// обычное фото с телефона.
     /// </summary>
     internal static bool IsStillImage(FfmpegRunner.MediaInfo info) =>
-        info.Video != null && info.DurationSeconds < MaxStillSeconds;
+        info.Video != null && info.DurationSeconds < FfmpegRunner.MaxStillSeconds;
 
     /// <summary>
     /// Готовит кадр для модели. Тяжёлое или крупное ужимается тем же ffmpeg, а не
@@ -310,7 +324,7 @@ public static class ConvertMedia
             fileName,
             new FfmpegRunner.MediaPlan(Width: MaxModelImageSide),
             info,
-            new FfmpegRunner.MediaLimits(MaxStillSeconds, MaxModelImageSide, 0));
+            new FfmpegRunner.MediaLimits(FfmpegRunner.MaxStillSeconds, MaxModelImageSide, 0));
 
         if (prepared.FilePath == null)
         {
@@ -412,7 +426,12 @@ public static class ConvertMedia
     /// Переводит фразу в план. Размеры и длительность уходят в промпт: без них модель
     /// не посчитает ни кроп, ни проценты.
     /// </summary>
-    private static async Task<FfmpegRunner.MediaPlan?> AskPlanAsync(
+    /// <returns>
+    /// План (null — модель ответила, но плана в ответе нет: просьба не механическая)
+    /// и признак того, что ответ вообще был. Молчание — это сбой сети или прокси,
+    /// и путать его с осознанным «тут нужна не ffmpeg-операция» нельзя.
+    /// </returns>
+    private static async Task<(FfmpegRunner.MediaPlan? Plan, bool Answered)> AskPlanAsync(
         string text,
         string fileName,
         FfmpegRunner.MediaInfo info,
@@ -430,7 +449,9 @@ public static class ConvertMedia
 
         BotLogger.LogAi(BotLogger.ChatGptThreadKey, "🎬 План операции над {File}: {Plan}", fileName, answer);
 
-        return MediaPlanParser.Parse(answer);
+        return string.IsNullOrWhiteSpace(answer)
+            ? (null, false)
+            : (MediaPlanParser.Parse(answer), true);
     }
 
     /// <summary>

@@ -77,6 +77,17 @@ public static class YtDlpRunner
         /// Чинится установкой, а не ожиданием, поэтому отделено от прочих поломок.
         /// </summary>
         JsRuntime,
+
+        /// <summary>
+        /// Файл перерос потолок прямо во время качания: размеров потоков yt-dlp
+        /// заранее не знал, и оценка ступени оказалась заниженной.
+        /// </summary>
+        TooBig,
+
+        /// <summary>
+        /// На диске кончилось место — качание прервал сторож.
+        /// </summary>
+        NoRoom,
         Failed
     }
 
@@ -195,16 +206,23 @@ public static class YtDlpRunner
                 hardCapBytes,
                 section);
 
+            // Сторож убивает процесс по трём разным причинам, а наружу это приезжает
+            // одинаковым «прервано»: без его вердикта пользователь на «слишком большое»
+            // и на «нет места» видел бы общее «не получилось» и ретраил безнадёжное
+            YtDlpFailure? watchdogVerdict = null;
+
             var result = await ProcessRunner.RunAsync(
                 AppConfig.MediaSettings.YtDlpPath,
                 arguments,
                 TimeSpan.FromMinutes(AppConfig.MediaSettings.DownloadTimeoutMinutes),
                 workspace.FullPath,
-                token => WatchAsync(workspace, hardCapBytes, token));
+                token => WatchAsync(workspace, hardCapBytes, verdict => watchdogVerdict = verdict, token));
 
             if (!result.Ok)
             {
-                var failure = result.TimedOut ? YtDlpFailure.Failed : Classify(result.StandardError);
+                var failure = result.TimedOut
+                    ? watchdogVerdict ?? YtDlpFailure.Failed
+                    : Classify(result.StandardError);
                 LogFailure("качание", videoId, failure, arguments, result.StandardError);
 
                 return (null, failure);
@@ -500,6 +518,8 @@ public static class YtDlpRunner
     /// <summary>
     /// Выбирает качество под лимит вложения. portion — какая доля видео нужна:
     /// у обрезки качается только отрезок, и оценка масштабируется вместе с ним.
+    /// Ступени из манифеста — исключение: отрезок им не вырезать, они всегда качаются
+    /// целиком, и заниженная оценка обманула бы и проверку места, и выбор качества.
     /// null — не влезает даже минимальное качество, и оно заведомо больше потолка.
     /// </summary>
     internal static Choice? Choose(IReadOnlyList<Rung> ladder, long uploadLimit, long hardCap, double portion = 1)
@@ -515,7 +535,7 @@ public static class YtDlpRunner
 
         foreach (var rung in ladder)
         {
-            var bytes = (long)(rung.EstimatedBytes * scale);
+            var bytes = Estimate(rung, scale);
 
             if (rung.SizeKnown && bytes <= target)
             {
@@ -524,7 +544,7 @@ public static class YtDlpRunner
         }
 
         var minimal = ladder[^1];
-        var minimalBytes = (long)(minimal.EstimatedBytes * scale);
+        var minimalBytes = Estimate(minimal, scale);
 
         // Неизвестный размер не повод отказывать заранее: от разрастания защищают
         // --max-filesize и сторож качания
@@ -535,6 +555,13 @@ public static class YtDlpRunner
 
         return new Choice(minimal.Height, best.Height, minimalBytes, true, true, minimal.Manifest);
     }
+
+    /// <summary>
+    /// Сколько байт ждать от ступени с учётом доли, которая нужна. Манифест качается
+    /// целиком независимо от отрезка — доля к нему не применяется.
+    /// </summary>
+    private static long Estimate(Rung rung, double scale) =>
+        rung.Manifest ? rung.EstimatedBytes : (long)(rung.EstimatedBytes * scale);
 
     /// <summary>
     /// Превращает текст ошибки yt-dlp в причину отказа. Единственное, что стоит между
@@ -660,7 +687,11 @@ public static class YtDlpRunner
     /// когда размер потока неизвестен, и применяется к потокам по отдельности.
     /// Настоящий потолок держит этот цикл.
     /// </summary>
-    private static async Task WatchAsync(MediaWorkspace workspace, long hardCapBytes, CancellationToken token)
+    private static async Task WatchAsync(
+        MediaWorkspace workspace,
+        long hardCapBytes,
+        Action<YtDlpFailure> report,
+        CancellationToken token)
     {
         var lastSize = -1L;
         var stagnant = 0;
@@ -674,12 +705,14 @@ public static class YtDlpRunner
             if (size > hardCapBytes)
             {
                 BotLogger.Warning("Качание переросло потолок ({Size} байт) — прерываю", size);
+                report(YtDlpFailure.TooBig);
                 return;
             }
 
             if (!workspace.HasRoomFor(0))
             {
                 BotLogger.Warning("Место на диске кончилось — прерываю качание");
+                report(YtDlpFailure.NoRoom);
                 return;
             }
 
@@ -690,6 +723,7 @@ public static class YtDlpRunner
                 if (stagnant >= StallSeconds)
                 {
                     BotLogger.Warning("Качание не растёт {Seconds} с — считаю зависшим", stagnant);
+                    report(YtDlpFailure.Failed);
                     return;
                 }
             }

@@ -71,6 +71,28 @@ public static class MediaReply
     }
 
     /// <summary>
+    /// Меняет текст карточки прогресса: у долгой операции этапы разные, и карточка
+    /// «качаю» на получасовом пережатии выглядит зависшей. Не получилось — не беда,
+    /// как и с удалением.
+    /// </summary>
+    public static async Task EditEmbedAsync(IUserMessage? message, Embed embed)
+    {
+        if (message == null)
+        {
+            return;
+        }
+
+        try
+        {
+            await message.ModifyAsync(properties => properties.Embed = embed);
+        }
+        catch (Exception ex)
+        {
+            BotLogger.Warning("Не удалось обновить карточку прогресса: {Message}", ex.Message);
+        }
+    }
+
+    /// <summary>
     /// Убирает карточку прогресса. Не получилось — не беда: лишний embed в чате
     /// не стоит того, чтобы ронять результат.
     /// </summary>
