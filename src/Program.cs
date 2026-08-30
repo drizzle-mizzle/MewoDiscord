@@ -35,7 +35,6 @@ internal class Program
 
     private static async Task Main()
     {
-        // Настройка логирования
         Log.Logger = new LoggerConfiguration()
             .WriteTo.Console()
             .WriteTo.File("logs/bot-.log", rollingInterval: RollingInterval.Day)
@@ -43,14 +42,12 @@ internal class Program
 
         Log.Information("Запуск бота...");
 
-        // Проверка токена
         if (string.IsNullOrEmpty(AppConfig.BotToken))
         {
             Log.Error("Токен бота не найден в config.ini! Установите BotToken в файле конфигурации.");
             return;
         }
 
-        // Создание клиента Discord
         var config = new DiscordSocketConfig
         {
             GatewayIntents = GatewayIntents.AllUnprivileged | GatewayIntents.MessageContent,
@@ -71,9 +68,8 @@ internal class Program
             CustomAiActionStore.Load();
             MediaSessionStore.Load();
 
-            // YouTube ломает yt-dlp примерно раз в месяц, и на вопрос «почему перестало
-            // работать» в журнале должен быть ответ. Не отвечает — не беда: остальной
-            // бот работает, а действие download_video скажет об этом само
+            // YouTube ломает yt-dlp примерно раз в месяц: версия в журнале — ответ
+            // на вопрос «почему перестало работать»
             var ytDlpVersion = await YtDlpRunner.VersionAsync();
 
             if (ytDlpVersion != null)
@@ -86,7 +82,6 @@ internal class Program
             }
         }
 
-        // Регистрация модулей команд
         await _interactions.AddModulesAsync(typeof(Program).Assembly, services: null);
 
         // ИИ-часть на OpenRouter отключена целиком — её команды в Discord не регистрируются
@@ -95,7 +90,6 @@ internal class Program
             await _interactions.RemoveModuleAsync(module);
         }
 
-        // Аналогично для ChatGPT-части
         if (!AppConfig.UseChatGpt)
         {
             BotLogger.Information("ChatGPT отключён (UseChatGpt: false): команды /chatgpt не активны");
@@ -109,7 +103,6 @@ internal class Program
         // Ретранслятор общих событий в общий чат — подписка до первого события
         GeneralChatRelay.Subscribe();
 
-        // Обработчики событий
         _client.Log += OnLog;
         _interactions.Log += OnLog;
         _client.Ready += () => RunInBackground(OnReady());
@@ -117,13 +110,11 @@ internal class Program
         _client.MessageReceived += message => RunInBackground(MessageHandler.HandleMessageReceived(message));
         _client.UserVoiceStateUpdated += (user, before, after) => RunInBackground(VoiceStatusHandler.HandleVoiceStateUpdated(user, before, after));
 
-        // Подключение к Discord
         await _client.LoginAsync(TokenType.Bot, AppConfig.BotToken);
         await _client.StartAsync();
 
-        // Graceful shutdown по Ctrl+C (запуск с консоли) и по SIGTERM (docker stop —
-        // основной способ остановки: без него контейнер гасят убийством процесса,
-        // и каждая штатная остановка выглядит в логах падением)
+        // Graceful shutdown по Ctrl+C (запуск с консоли) и по SIGTERM: docker stop —
+        // основной способ остановки, и без обработки она выглядит в логах падением
         var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) =>
         {
@@ -153,9 +144,8 @@ internal class Program
 
     /// <summary>
     /// Принудительно переустанавливает слеш-команды: сносит все глобальные и серверные,
-    /// включая устаревшие, которых уже нет в коде, и регистрирует текущий набор модулей
-    /// на сервере, откуда вызвана команда. Набор учитывает снятые при запуске модули
-    /// (ИИ-часть, ChatGPT при UseChatGpt: false) — обратно они не вернутся.
+    /// включая устаревшие, и регистрирует текущий набор модулей на сервере, откуда вызвана
+    /// команда. Снятые при запуске модули (ИИ-часть, ChatGPT) обратно не вернутся.
     /// </summary>
     internal static async Task<(int RemovedGlobal, int RemovedGuild, int Registered)> ReinstallCommandsAsync(SocketGuild? guild)
     {

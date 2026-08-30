@@ -8,35 +8,23 @@ namespace MewoDiscord.Utils;
 /// <summary>
 /// Запуск ffmpeg над файлом. Модель сюда не пишет ни строчки командной строки:
 /// она отдаёт типизированный план (<see cref="MediaPlan"/>), а аргументы собирает код
-/// из белого списка операций — иначе это было бы выполнение произвольных команд из вывода ИИ.
-/// Операции нарочно простые: формат, обрезка по времени, кроп, размер, частота кадров,
-/// вытаскивание звуковой дорожки.
-/// Работа идёт по путям, а не по байтам: скачанное видео бывает на два гигабайта,
-/// и держать его в памяти нельзя. Рабочий каталог приезжает
-/// <see cref="MediaWorkspace"/> — он же доказывает, что вызывающий занял слот:
-/// свободно плодить ffmpeg-процессы на маленьком сервере нельзя.
+/// из белого списка — иначе это было бы выполнение произвольных команд из вывода ИИ.
+/// Работа идёт по путям, а не по байтам: скачанное видео бывает на два гигабайта.
+/// <see cref="MediaWorkspace"/> в параметрах — доказательство, что вызывающий занял слот.
 /// </summary>
 public static class FfmpegRunner
 {
     /// <summary>
-    /// Максимальная длительность гифки. Больше в чат не нужно, а каждая лишняя
-    /// секунда — это кадры, которые кто-то должен пережать.
+    /// Максимальная длительность гифки.
     /// </summary>
     internal const double MaxGifSeconds = 15;
 
-    /// <summary>
-    /// Максимальная ширина гифки в пикселях.
-    /// </summary>
     internal const int MaxGifWidth = 640;
 
-    /// <summary>
-    /// Максимальная частота кадров гифки.
-    /// </summary>
     internal const int MaxGifFps = 20;
 
     /// <summary>
-    /// Потолки для клипа, собранного из вложения в чате: обрезка присланного файла —
-    /// операция на секунды, а не на минуты.
+    /// Потолки для клипа из вложения в чате.
     /// </summary>
     internal const double MaxClipSeconds = 300;
 
@@ -45,16 +33,14 @@ public static class FfmpegRunner
     internal const int MaxClipFps = 30;
 
     /// <summary>
-    /// Потолки для скачанного видео: длину задаёт пользователь, ограничивает
-    /// не время, а размер файла, поэтому по времени потолка нет — только по картинке.
+    /// Потолки для скачанного видео: по времени не режем, ограничивает размер файла.
     /// </summary>
     internal const int MaxDownloadWidth = 1920;
 
     internal const int MaxDownloadFps = 60;
 
     /// <summary>
-    /// Потолок входного файла из чата. Совпадает с обычным лимитом вложений Discord —
-    /// больше к нам всё равно не приедет.
+    /// Потолок входного файла из чата — обычный лимит вложений Discord.
     /// </summary>
     internal const int MaxInputBytes = 25 * 1024 * 1024;
 
@@ -64,15 +50,13 @@ public static class FfmpegRunner
     private const int ProbeTimeoutSeconds = 60;
 
     /// <summary>
-    /// Форматы, в которые разрешено конвертировать. Белый список, а не проверка
-    /// на «плохое»: имя формата уходит в аргументы и в имя файла, и гадать
-    /// о безопасности неизвестного не хочется.
+    /// Белый список форматов: имя уходит и в аргументы ffmpeg, и в имя файла.
     /// </summary>
     internal static readonly string[] AllowedFormats = ["gif", "mp4", "webm", "png", "jpg", "webp"];
 
     /// <summary>
-    /// Форматы звуковой дорожки. Отдельным списком, а не вместе с остальными:
-    /// иначе «сконвертируй картинку в mp3» прошло бы проверку.
+    /// Форматы звуковой дорожки — отдельным списком, иначе «сконвертируй картинку
+    /// в mp3» прошло бы проверку.
     /// </summary>
     internal static readonly string[] AllowedAudioFormats = ["mp3", "m4a", "opus", "ogg"];
 
@@ -94,9 +78,6 @@ public static class FfmpegRunner
         int? Fps = null,
         bool AudioOnly = false)
     {
-        /// <summary>
-        /// Есть ли в плане хоть одна операция: пустой план выполнять бессмысленно.
-        /// </summary>
         public bool IsEmpty => Format == null && Start == null && End == null
             && Crop == null && Width == null && Fps == null && !AudioOnly;
 
@@ -110,20 +91,13 @@ public static class FfmpegRunner
 
     public record CropBox(int X, int Y, int Width, int Height);
 
-    /// <summary>
-    /// Параметры видеодорожки для мета-подписи и математики пережатия.
-    /// </summary>
     public record VideoStreamInfo(string Codec, int Width, int Height, double Fps, long BitrateBps);
 
-    /// <summary>
-    /// Параметры звуковой дорожки.
-    /// </summary>
     public record AudioStreamInfo(string Codec, int Channels, int SampleRate, long BitrateBps);
 
     /// <summary>
     /// Размеры, длительность и параметры дорожек. Width, Height и DurationSeconds
-    /// продублированы наверху записи намеренно: по ним считается кроп, и они должны
-    /// оставаться доступными, когда видеодорожки нет вовсе (файл со звуком).
+    /// продублированы наверху: по ним считается кроп, а видеодорожки может не быть вовсе.
     /// </summary>
     public record MediaInfo(
         int Width,
@@ -135,14 +109,10 @@ public static class FfmpegRunner
         string? ContainerName = null);
 
     /// <summary>
-    /// Потолки одной операции. У гифки они жёстче, чем у клипа, а у скачанного видео
-    /// длину задаёт пользователь — режет не время, а лимит вложения.
+    /// Потолки одной операции: у гифки жёстче, чем у клипа.
     /// </summary>
     public record MediaLimits(double MaxSeconds, int MaxWidth, int MaxFps)
     {
-        /// <summary>
-        /// Потолки для файла, присланного в чат.
-        /// </summary>
         public static MediaLimits Chat(string format) => format == "gif"
             ? new MediaLimits(MaxGifSeconds, MaxGifWidth, MaxGifFps)
             : new MediaLimits(MaxClipSeconds, MaxClipWidth, MaxClipFps);
@@ -171,8 +141,8 @@ public static class FfmpegRunner
         bool CopyStreams = false);
 
     /// <summary>
-    /// Результат — путь к файлу внутри рабочего каталога либо причина отказа
-    /// для пользователя. Ошибки наружу не бросаются.
+    /// Путь к файлу внутри рабочего каталога либо причина отказа для пользователя:
+    /// ошибки наружу не бросаются.
     /// <paramref name="TruncatedSeconds"/> — до скольких секунд потолок обработки урезал
     /// результат, о котором пользователь ничего такого не просил (0 — не урезал).
     /// </summary>
@@ -180,14 +150,13 @@ public static class FfmpegRunner
 
     /// <summary>
     /// Длительность неподвижной картинки. Ровный ноль не годится: ffprobe отдаёт
-    /// для одиночного кадра около одной сороковой секунды, и строгая проверка считала бы
-    /// обычное фото видео — а видео и картинка расходятся дальше по всей обработке.
+    /// для одиночного кадра около одной сороковой секунды.
     /// </summary>
     internal const double MaxStillSeconds = 1;
 
     /// <summary>
     /// Выполняет план над файлом. Имя результата строится от displayName —
-    /// это имя, которое увидит пользователь, а не путь на диске.
+    /// имени для пользователя, а не пути на диске.
     /// </summary>
     public static async Task<MediaResult> RunAsync(
         MediaWorkspace workspace,
@@ -216,8 +185,7 @@ public static class FfmpegRunner
 
     /// <summary>
     /// До скольких секунд потолок обработки урезал результат там, где обрезки не просили.
-    /// 0 — не урезал или обрезку задал сам пользователь: про свой же отрезок ему говорить
-    /// нечего, а вот молча потерянный хвост восьмиминутного видео выглядит поломкой.
+    /// 0 — не урезал или обрезку задал сам пользователь: про свой отрезок он знает.
     /// </summary>
     private static double TruncatedBy(MediaPlan plan, MediaInfo info, MediaLimits caps, string format)
     {
@@ -232,9 +200,8 @@ public static class FfmpegRunner
     }
 
     /// <summary>
-    /// Пережимает файл под заданные параметры. От <see cref="RunAsync"/> отличается тем,
-    /// что параметры кодирования посчитаны заранее, а не выведены из плана: круг сжатия
-    /// целится в конкретный размер. Выходной путь задаёт вызывающий — он же нумерует круги.
+    /// Пережимает файл под заранее посчитанные параметры: круг сжатия целится
+    /// в конкретный размер. Выходной путь задаёт вызывающий — он же нумерует круги.
     /// </summary>
     public static async Task<MediaResult> EncodeAsync(
         MediaWorkspace workspace,
@@ -318,8 +285,7 @@ public static class FfmpegRunner
     }
 
     /// <summary>
-    /// Разбирает json от ffprobe. null — нет ни видео-, ни звуковой дорожки,
-    /// значит это не то, с чем мы работаем.
+    /// Разбирает json от ffprobe. null — нет ни видео-, ни звуковой дорожки.
     /// </summary>
     internal static MediaInfo? ParseProbe(string json)
     {
@@ -454,10 +420,9 @@ public static class FfmpegRunner
     }
 
     /// <summary>
-    /// Формат результата. Запрошенный явно обязан быть в белом списке — иначе отказ:
-    /// имя формата уходит в аргументы. Если формат не просили, оставляем исходный,
-    /// а когда и он не из списка (.mov, .mkv, .heic) — берём разумный по умолчанию:
-    /// отказывать в обрезке только из-за контейнера было бы глупо.
+    /// Формат результата. Запрошенный явно обязан быть в белом списке — иначе отказ.
+    /// Не просили — оставляем исходный, а когда и он не из списка (.mov, .mkv, .heic),
+    /// берём умолчание по признаку движения.
     /// </summary>
     internal static string? ResolveFormat(string? requested, string inputFileName, bool animated)
     {
@@ -509,8 +474,8 @@ public static class FfmpegRunner
     }
 
     /// <summary>
-    /// Собирает аргументы ffmpeg из плана. Всё, что приходит от модели, зажимается
-    /// в потолки здесь: план — это пожелание, а не команда.
+    /// Собирает аргументы ffmpeg из плана. Всё, что пришло от модели, зажимается
+    /// в потолки здесь.
     /// </summary>
     internal static List<string> BuildArguments(
         MediaPlan plan,
@@ -542,7 +507,6 @@ public static class FfmpegRunner
 
             if (format is "png" or "jpg" or "webp")
             {
-                // Один кадр: «сделай скриншот» — это тоже операция над видео
                 arguments.AddRange(["-an", "-frames:v", "1"]);
             }
             else
@@ -611,9 +575,8 @@ public static class FfmpegRunner
 
             arguments.AddRange(["-map", "0:v:0", "-map", "0:a:0?"]);
 
-            // Однопроходный ABR, а не CRF: попадание в байты через CRF — это ровно тот
-            // перебор кругов, который мы и убираем. Второй проход на слабом сервере
-            // не окупается против одного корректирующего круга
+            // Однопроходный ABR, а не CRF: CRF не целится в размер, а второй проход
+            // на слабом сервере не окупается против одного корректирующего круга
             arguments.AddRange(
             [
                 "-c:v", "libx264",

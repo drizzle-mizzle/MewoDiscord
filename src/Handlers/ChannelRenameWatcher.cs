@@ -60,7 +60,7 @@ public static class ChannelRenameWatcher
     }
 
     /// <summary>
-    /// Решение, что делать с именем канала. Чистая функция — вынесена для тестов.
+    /// Решение, что делать с именем канала.
     /// </summary>
     internal enum RenameDecision
     {

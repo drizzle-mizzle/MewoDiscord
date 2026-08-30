@@ -175,7 +175,7 @@ public class ChatGptClientTests
         Assert.Contains("[quotes имя:", prompt);
         Assert.Contains("@имя", prompt);
 
-        // Про Discord модели знать незачем — лишний повод для трактовок
+        // Про Discord в промпте ни слова
         Assert.DoesNotContain("Discord", prompt, StringComparison.OrdinalIgnoreCase);
 
         // Имя не определилось — промпт всё равно осмысленный
@@ -203,8 +203,7 @@ public class ChatGptClientTests
         Assert.Contains("\"content\":\"\\u043F\\u0440\\u0438\\u0432\\u0435\\u0442\"", json);
         Assert.DoesNotContain("image_url", json);
 
-        // Уровень рассуждений не задан — поля в запросе нет, и бэкенд берёт свой
-        // по умолчанию. Так уходят служебные запросы кастомных действий
+        // Уровень не задан — поля в запросе нет: так уходят служебные запросы
         Assert.DoesNotContain("reasoning_effort", json);
     }
 
@@ -228,8 +227,7 @@ public class ChatGptClientTests
     [InlineData(null, null)]
     public void Gpt_НеизвестныйУровеньРассужденийНеОтправляется(string? effort, string? expected)
     {
-        // Неизвестный уровень бэкенд отвергает целиком, и вместо ответа пользователь
-        // получил бы ошибку — поэтому всё незнакомое просто не отправляем
+        // Незнакомое не отправляем вовсе
         Assert.Equal(expected, ChatGptClient.NormalizeEffort(effort));
     }
 

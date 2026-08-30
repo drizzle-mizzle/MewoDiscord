@@ -122,10 +122,8 @@ public static class MessageHandler
             return false;
         }
 
-        // Поиск мата через BogaNet
         var badWords = new List<string>(BadWordFilter.Instance.GetAll(text));
 
-        // Поиск мата через собственный словарь
         var tokens = text.Split([' ', ',', '!', '?', '\n', '\r', '\t'], StringSplitOptions.RemoveEmptyEntries);
 
         foreach (var token in tokens)
@@ -148,7 +146,7 @@ public static class MessageHandler
     }
 
     /// <summary>
-    /// Проверка на мат через регулярку + ИИ-верификацию. Вызывается после быстрой проверки и continuation.
+    /// Проверка на мат через регулярку с последующей ИИ-верификацией.
     /// </summary>
     private static async Task<bool> TryHandleProfanityWithAiAsync(SocketUserMessage userMessage)
     {
@@ -261,10 +259,8 @@ public static class MessageHandler
 
         var result = sb.ToString();
 
-        // Схлопываем повторяющиеся буквы (хуууууй → хуй)
         result = _repeatedCharsRegex.Replace(result, "$1");
 
-        // Убираем разделители между буквами (п.и.з.д.а, х*у*й, б л я)
         return _separatorRegex.Replace(result, string.Empty);
     }
 
@@ -346,7 +342,6 @@ public static class MessageHandler
         var userId = message.Author.Id;
         var guild = (message.Channel as SocketGuildChannel)?.Guild;
 
-        // Определяем уровень накала для пользователя
         var heatLevel = GetAndUpdateHeatLevel(userId);
 
         var context = await BuildContextAsync(message, ShortContextMessages, ShortContextMaxChars);
@@ -354,14 +349,12 @@ public static class MessageHandler
         var badWordsStr = string.Join(", ", badWords);
         var botName = guild?.CurrentUser.DisplayName ?? "Bot";
 
-        // Подставляем плейсхолдеры в промпт
         var userMessagePrompt = cfg.MessagePrompt
             .Replace("{context}", context)
             .Replace("{user}", user)
             .Replace("{badWords}", badWordsStr)
             .Replace("{botName}", botName);
 
-        // Выбираем системный промпт и температуру по уровню накала
         var systemPrompt = cfg.SystemPrompt.Replace("{botName}", botName);
         var temperature = cfg.Temperature + _heatTemperatureBonus[heatLevel];
 
@@ -462,8 +455,7 @@ public static class MessageHandler
 
         contextLines.Add($"{FormatAuthor(message.Author, guild, includeIds)}: {ResolveMentions(message.Content, guild)}");
 
-        // Удаляем самые старые сообщения с начала, пока не влезаем в лимит.
-        // Минимум 2 сообщения остаются всегда.
+        // Самые старые уходят, пока не влезем в лимит; два последних остаются всегда
         while (contextLines.Count > 2)
         {
             var totalChars = contextLines.Sum(l => l.Length);
@@ -530,13 +522,11 @@ public static class MessageHandler
 
         var botId = guild.CurrentUser.Id;
 
-        // Прямой пинг бота
         if (message.MentionedUsers.Any(u => u.Id == botId))
         {
             return true;
         }
 
-        // Ответ на сообщение бота
         if (message.Reference?.MessageId.IsSpecified == true)
         {
             var referenced = message.Channel.GetCachedMessage(message.Reference.MessageId.Value);
@@ -610,7 +600,6 @@ public static class MessageHandler
             return false;
         }
 
-        // Декрементируем счётчик
         if (remaining <= 1)
         {
             _activeConversations.TryRemove(channelId, out _);

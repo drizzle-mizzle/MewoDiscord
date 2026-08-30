@@ -133,10 +133,8 @@ public static partial class DiscordMentions
     private static bool IsNameChar(char c) => char.IsLetterOrDigit(c) || c == '_';
 
     /// <summary>
-    /// Id пользователей, упомянутых **в тексте** сообщения. Не то же самое, что
-    /// MentionedUsers: реплай с включённым «@» добавляет туда автора сообщения, на которое
-    /// отвечают, хотя тот в тексте не упомянут. Для решений вида «пользователь кого-то
-    /// назвал» годится только явное упоминание.
+    /// Id пользователей, упомянутых в тексте сообщения. Не то же самое, что MentionedUsers:
+    /// реплай с включённым «@» добавляет туда автора цитаты, хотя в тексте его нет.
     /// </summary>
     public static IReadOnlyList<ulong> ExplicitUserIds(string content)
     {

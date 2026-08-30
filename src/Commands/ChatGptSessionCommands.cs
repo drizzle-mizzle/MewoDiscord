@@ -37,8 +37,7 @@ public class ChatGptSessionCommands : InteractionModuleBase<SocketInteractionCon
         }
 
         // Сообщение берём из результата правки, а не отдельным запросом: лишний поход
-        // в REST — это ещё одна возможность упасть между «карточка отправлена»
-        // и «сессия создана», а приглашение без сессии молча не работает
+        // в REST мог бы упасть между «карточка отправлена» и «сессия создана»
         var original = await ModifyOriginalResponseAsync(m => m.Embed = BotEmbeds.Info(BotMessages.ChatGptSessionNew()));
         var entry = ChatGptSessionStore.Create(Context.Guild.Id, Context.Channel.Id, original.Id);
 

@@ -14,8 +14,8 @@ public class HelpCommand : InteractionModuleBase<SocketInteractionContext>
     [SlashCommand("help", "Что умеет бот и как его просить")]
     public async Task Help()
     {
-        // При выключенной ChatGPT-части упоминания бота никто не слушает: обещать
-        // то, что не сработает, хуже, чем промолчать о нём
+        // При выключенной ChatGPT-части упоминания бота никто не слушает — вторая
+        // половина справки обещала бы неработающее
         var text = AppConfig.UseChatGpt
             ? BotMessages.HelpText() + "\n" + BotMessages.HelpTextChatGpt()
             : BotMessages.HelpText();

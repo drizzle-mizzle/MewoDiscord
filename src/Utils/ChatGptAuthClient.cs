@@ -7,9 +7,8 @@ namespace MewoDiscord.Utils;
 
 /// <summary>
 /// Management API CLIProxyAPI: OAuth-логин Codex прямо из Discord и список подключённых
-/// к прокси аккаунтов. Отделён от <see cref="ChatGptClient"/> намеренно: у management
-/// свои ручки, свой заголовок X-Management-Key и свой пароль, а к обращениям к ИИ он
-/// не относится вовсе — искать логин в клиенте чата читателю неоткуда.
+/// к прокси аккаунтов. Отделён от <see cref="ChatGptClient"/>: у management свои ручки,
+/// свой заголовок X-Management-Key и свой пароль.
 /// Обмен кода на токены и дальнейший их рефреш прокси делает сам.
 /// </summary>
 public static class ChatGptAuthClient
@@ -28,10 +27,8 @@ public static class ChatGptAuthClient
     private const int LoginPollDelayMs = 1000;
 
     /// <summary>
-    /// Потолок одного запроса к management API. Все четыре ручки отвечают мгновенно —
-    /// прокси стоит соседним контейнером, — а долгая часть логина у него фоновая
-    /// и опрашивается циклом. Таймаут клиента чата (минуты — там рисуются картинки)
-    /// заставил бы команду логина висеть впустую.
+    /// Потолок одного запроса к management API: все четыре ручки отвечают мгновенно,
+    /// а долгая часть логина у прокси фоновая и опрашивается циклом.
     /// </summary>
     private const int RequestTimeoutSeconds = 15;
 

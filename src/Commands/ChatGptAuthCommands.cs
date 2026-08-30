@@ -110,8 +110,8 @@ public class ChatGptAuthCommands : InteractionModuleBase<SocketInteractionContex
 }
 
 /// <summary>
-/// Модалка для вставки ссылки после логина. Тексты — константы в атрибутах:
-/// осознанное исключение из правила BotMessages (атрибуты требуют compile-time констант).
+/// Модалка для вставки ссылки после логина. Тексты — константы в атрибутах: исключение
+/// из правила BotMessages, атрибуты требуют compile-time констант.
 /// </summary>
 public class LoginModal : IModal
 {

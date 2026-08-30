@@ -20,10 +20,6 @@ namespace MewoDiscord.Handlers;
 /// </summary>
 public static partial class PostMediaHandler
 {
-    /// <summary>
-    /// Сколько ссылок из одного сообщения обрабатываем: дальше это уже не пересказ поста,
-    /// а флуд вложениями.
-    /// </summary>
     internal const int MaxLinksPerMessage = 3;
 
     private const int MaxAttachments = 10;
@@ -40,8 +36,7 @@ public static partial class PostMediaHandler
     private const ulong FallbackUploadLimit = 10 * 1024 * 1024;
 
     /// <summary>
-    /// Сколько постов обрабатываем одновременно. Работа фоновая и незаказанная —
-    /// пусть ждёт, а не соревнуется за память и канал с остальным ботом.
+    /// Сколько постов обрабатываем одновременно.
     /// </summary>
     private static readonly SemaphoreSlim _slots = new(2, 2);
 
@@ -71,10 +66,8 @@ public static partial class PostMediaHandler
 
         _ = Task.Run(async () =>
         {
-            // Обработка идёт на любое сообщение со ссылкой, без всякой просьбы, и каждая
-            // держит в памяти скачанные файлы: без общего потолка десяток ссылок подряд
-            // множит эти буферы линейно. Очередь тут уместна — ждать своей очереди
-            // секунды никому не мешает
+            // Обработка идёт на любое сообщение со ссылкой и держит в памяти скачанные
+            // файлы: без общего потолка десяток ссылок подряд множит буферы линейно
             await _slots.WaitAsync();
 
             try
@@ -162,7 +155,6 @@ public static partial class PostMediaHandler
 
             if (attachments.Count > 0)
             {
-                // Components V2: медиа лежит внутри цветного контейнера
                 await message.Channel.SendFilesAsync(
                     attachments,
                     components: BuildContainer(post, request.Url, fileNames, oversized, style),
@@ -228,9 +220,8 @@ public static partial class PostMediaHandler
 
     /// <summary>
     /// Заголовок контейнера: ссылка на пост, показываемое имя автора под ней и текст поста.
-    /// Подписью ссылки всегда идёт логин — он из латиницы и цифр, поэтому ссылка рисуется
-    /// у любого автора. Имя живёт отдельной строкой: в нём бывают эмодзи, а с ними Discord
-    /// ссылку не рисует вовсе. Логина нет (такое бывает только при неполном ответе) —
+    /// Подписью ссылки всегда идёт логин: он из латиницы и цифр, а с эмодзи Discord
+    /// скрытую ссылку не рисует вовсе. Имя поэтому живёт отдельной строкой; логина нет —
     /// подписью становится имя, вычищенное по тем же правилам.
     /// </summary>
     internal static string? BuildHeaderText(SocialPost post, string postUrl)

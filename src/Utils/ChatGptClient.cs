@@ -24,9 +24,8 @@ public static class ChatGptClient
     private const int RequestTimeoutSeconds = 300;
 
     /// <summary>
-    /// Потолок служебного запроса к инстант-модели. Ответ там — «ДА» или одна фраза,
-    /// и ждать его дольше незачем: этот запрос делается под замком канала, и пятиминутный
-    /// таймаут генерации картинок остановил бы на нём весь канал.
+    /// Потолок служебного запроса к инстант-модели: он делается под замком канала,
+    /// и пятиминутный таймаут генерации картинок остановил бы весь канал.
     /// </summary>
     private const int InstantTimeoutSeconds = 30;
 
@@ -36,10 +35,9 @@ public static class ChatGptClient
     internal const int MaxHistoryTurns = 40;
 
     /// <summary>
-    /// Сколько последних ходов истории хранят приложенные к ним картинки. Дальше в прошлое
-    /// от них остаётся только служебная строка с именами файлов: картинки уходят в запрос
-    /// при каждом обмене, и без этого потолка сессия с парой фотографий раздувает
-    /// и запрос, и своё состояние на диске до неподъёмных размеров.
+    /// Сколько последних ходов истории хранят приложенные к ним картинки; дальше в прошлое
+    /// остаётся только служебная строка с именами файлов. Картинки уходят в запрос при
+    /// каждом обмене, и без потолка пара фотографий раздувает и запрос, и состояние на диске.
     /// </summary>
     internal const int MaxImageTurns = 4;
 
@@ -61,21 +59,16 @@ public static class ChatGptClient
     internal const int InstantMaxTokens = 512;
 
     /// <summary>
-    /// Потолок цитаты в шапке сообщения: она напоминает, о чём речь, а не пересказывает
-    /// всю переписку — на это есть история сессии.
+    /// Потолок цитаты в шапке сообщения: она напоминает, о чём речь, а не пересказывает.
     /// </summary>
     internal const int MaxQuotedLength = 300;
 
-    /// <summary>
-    /// Имя бота, если настоящее определить не удалось.
-    /// </summary>
     private const string DefaultBotName = "bot";
 
     /// <summary>
-    /// Базовый системный промпт: объясняет модели, что она в общем чате с многими
-    /// собеседниками, как её зовут и в каком формате приходят сообщения. Формат описан
-    /// здесь и собирается в BuildHeader — править их надо вместе. Про Discord намеренно
-    /// ни слова: лишняя информация, которую модель начнёт трактовать.
+    /// Базовый системный промпт: модель в общем чате с многими собеседниками, как её
+    /// зовут и в каком формате приходят сообщения. Формат описан здесь, а собирается
+    /// в BuildHeader — править их надо вместе. Про Discord намеренно ни слова.
     /// Промпт из config.ini (характер, язык) дописывается следом.
     /// </summary>
     private const string BaseSystemPrompt =
@@ -100,14 +93,8 @@ public static class ChatGptClient
         Timeout = TimeSpan.FromSeconds(RequestTimeoutSeconds)
     };
 
-    /// <summary>
-    /// Входной файл — вложение пользователя (картинка, текстовый файл и т.п.).
-    /// </summary>
     public record InputFile(string FileName, byte[] Content, string? MimeType = null);
 
-    /// <summary>
-    /// Сгенерированная картинка.
-    /// </summary>
     public record GeneratedImage(byte[] Content, string MimeType, string? RevisedPrompt);
 
     /// <summary>
@@ -129,7 +116,7 @@ public static class ChatGptClient
 
     /// <summary>
     /// Обстановка вокруг сообщения: как зовут бота в этом чате, кто написал и на что
-    /// отвечает. Из неё собирается шапка сообщения и подставляется имя в системный промпт.
+    /// отвечает. Из неё собирается шапка сообщения.
     /// </summary>
     public record ChatContext(
         string? BotName = null,
@@ -140,9 +127,7 @@ public static class ChatGptClient
     /// <summary>
     /// Отправляет сообщение в чат с учётом истории сессии. Картинки из files уходят
     /// мультимодальными частями, текстовые файлы вклеиваются в текст, остальные форматы
-    /// пропускаются с пометкой. Модель сама решает, ответить текстом или нарисовать
-    /// картинку (инструмент image_generation прокси подмешивает в каждый запрос),
-    /// поэтому ответ может нести и текст, и изображения.
+    /// пропускаются с пометкой. В ответе может быть и текст, и изображения.
     /// </summary>
     public static async Task<ChatReply> ChatAsync(ChatGptSession session, string text, IReadOnlyList<InputFile>? files = null, ChatContext? context = null)
     {
@@ -178,8 +163,8 @@ public static class ChatGptClient
 
         if (response.Body == null)
         {
-            // Отказ авторизации доносим до вызывающего: советовать «попробуй ещё раз»
-            // при отозванном токене бессмысленно, там нужен перелогин администратора
+            // Отказ авторизации доносим до вызывающего: при отозванном токене
+            // нужен перелогин администратора, а не повтор запроса
             return response.Unauthorized ? _emptyReply with { Unauthorized = true } : _emptyReply;
         }
 
@@ -265,8 +250,8 @@ public static class ChatGptClient
     private record ProxyResponse(string? Body, bool Unauthorized = false);
 
     /// <summary>
-    /// POST к прокси. Наружу исключения не бросает — стиль OpenRouterClient.
-    /// <paramref name="timeout"/> ограничивает конкретный запрос: у клиента общий потолок
+    /// POST к прокси, исключения наружу не бросает.
+    /// <paramref name="timeout"/> ограничивает конкретный запрос: общий потолок клиента
     /// рассчитан на генерацию картинок и служебным запросам не годится.
     /// </summary>
     private static async Task<ProxyResponse> PostJsonAsync(string path, string json, TimeSpan? timeout = null)
@@ -386,8 +371,7 @@ public static class ChatGptClient
     }
 
     /// <summary>
-    /// Ужимает цитируемый текст в одну строку: шапка должна оставаться шапкой,
-    /// а не пересказом всей переписки.
+    /// Ужимает цитируемый текст в одну строку.
     /// </summary>
     private static string Shorten(string? text)
     {
@@ -403,10 +387,9 @@ public static class ChatGptClient
 
     /// <summary>
     /// Решает, подмешивать ли в запрос последнюю нарисованную картинку. Она нужна, чтобы
-    /// модель могла править нарисованное («сделай его рыжим»): в истории её нет, потому что
-    /// картинки из ассистентских сообщений прокси отбрасывает (в Responses API они уходят
-    /// только от роли user). Но если пользователь принёс свои картинки, предмет разговора
-    /// теперь они — прошлая только сбивала бы модель с толку.
+    /// модель могла править нарисованное («сделай его рыжим»): в истории её нет — картинки
+    /// от роли assistant прокси отбрасывает. Свои картинки пользователя отменяют подмешивание:
+    /// предмет разговора теперь они.
     /// </summary>
     internal static string? ResolveCarryImage(ChatGptSession session, ChatTurn turn) =>
         session.LastImage == null || turn.ImageDataUrls.Count > 0
@@ -502,7 +485,7 @@ public static class ChatGptClient
     }
 
     /// <summary>
-    /// Собирает data-URL для мультимодальных частей и картинок в /v1/images/edits.
+    /// Собирает data-URL для мультимодальных частей запроса.
     /// </summary>
     internal static string BuildDataUrl(string mime, byte[] content) =>
         $"data:{mime};base64,{Convert.ToBase64String(content)}";
@@ -551,9 +534,8 @@ public static class ChatGptClient
     }
 
     /// <summary>
-    /// Приводит уровень рассуждений к тому, что бэкенд точно понимает.
-    /// Всё незнакомое отбрасывается, а не отправляется как есть: неизвестный уровень
-    /// отвергается целиком, и вместо ответа пользователь получил бы ошибку.
+    /// Приводит уровень рассуждений к известному бэкенду. Незнакомое отбрасывается:
+    /// неизвестный уровень бэкенд отвергает вместе со всем запросом.
     /// </summary>
     internal static string? NormalizeEffort(string? effort)
     {

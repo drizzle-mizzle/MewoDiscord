@@ -15,9 +15,6 @@ namespace MewoDiscord.AiActionsProcessors;
 /// </summary>
 public static class EditProfilePicture
 {
-    /// <summary>
-    /// Сторона запрашиваемой аватарки. Больше не нужно: модель всё равно перерисует.
-    /// </summary>
     private const ushort AvatarSize = 512;
 
     private const string AvatarFileName = "avatar.png";
@@ -25,9 +22,9 @@ public static class EditProfilePicture
     private const int DownloadTimeoutSeconds = 60;
 
     /// <summary>
-    /// Атомарный суб-запрос к инстант-модели: свободная фраза пользователя превращается
-    /// в одну инструкцию для полноценной сессии. Промпт живёт здесь, а не в файле действия:
-    /// он описывает работу именно этого процессора, а не условие попадания.
+    /// Промпт суб-запроса: свободная фраза пользователя превращается в одну инструкцию
+    /// для сессии. Живёт здесь, а не в файле действия: это работа процессора,
+    /// а не условие попадания.
     /// </summary>
     private const string FormalizePrompt =
         """
@@ -52,16 +49,15 @@ public static class EditProfilePicture
             return;
         }
 
-        // Цель берём из упоминаний в тексте, а не из MentionedUsers: туда реплай подставляет
-        // автора цитаты, и тогда бот правил бы аватарку человеку, которого никто не звал.
-        // Сам бот целью быть не может — его упоминание это обращение
+        // Цель берём из упоминаний в тексте, а не из MentionedUsers: туда реплай
+        // подставляет автора цитаты. Сам бот целью быть не может
         var targetId = DiscordMentions.ExplicitUserIds(message.Content).FirstOrDefault(id => id != guild.CurrentUser.Id);
         var target = targetId == 0 ? null : message.MentionedUsers.FirstOrDefault(u => u.Id == targetId) ?? guild.GetUser(targetId);
 
         if (target is null)
         {
-            // Действие уже сработало и сообщение потреблено: промолчать здесь — значит
-            // выглядеть сломанным ботом. Такое бывает, когда упомянутый покинул сервер
+            // Сообщение уже потреблено сработавшим действием, поэтому молчать нельзя.
+            // Такое бывает, когда упомянутый покинул сервер
             BotLogger.Warning("Правка аватарки: упомянутый пользователь {UserId} не найден на сервере", targetId);
             _ = await MediaReply.SendEmbedAsync(message, BotEmbeds.Error(BotMessages.AiActionUserNotFound()));
             return;
@@ -89,7 +85,7 @@ public static class EditProfilePicture
 
         if (formalized.Length == 0)
         {
-            // Инстант-модель не ответила — отправляем запрос как есть, хуже не будет
+            // Инстант-модель не ответила — отправляем запрос как есть
             formalized = context.Text;
         }
 

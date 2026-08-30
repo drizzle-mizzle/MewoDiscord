@@ -24,9 +24,8 @@ public class VoiceAloneButton : InteractionModuleBase<SocketInteractionContext>
             return;
         }
 
-        // Подтверждение идёт под замком канала, а тот может быть занят журналом —
-        // на ответ взаимодействию отпущено три секунды, поэтому сначала подтверждаем
-        // его получение, а решение принимаем следом
+        // Подтверждение идёт под замком канала, а тот может быть занят журналом:
+        // на ответ взаимодействию отпущено три секунды
         await DeferAsync();
 
         var confirmed = ulong.TryParse(channelId, out var channel)

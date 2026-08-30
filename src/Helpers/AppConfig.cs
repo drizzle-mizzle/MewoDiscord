@@ -58,17 +58,15 @@ public static class AppConfig
 
     /// <summary>
     /// Типизированная секция работы с медиа: где рабочий каталог, сколько ему позволено
-    /// занять и чем качать. Пути к ffmpeg и ffprobe остались в COMMON — их уже ищут там
-    /// существующие конфиги, и ломать их ради красоты не стоит.
+    /// занять и чем качать. Пути к ffmpeg и ffprobe остались в COMMON.
     /// </summary>
     public record MediaSectionConfig(string SectionName)
     {
         public string YtDlpPath => Get(SectionName, nameof(YtDlpPath), "yt-dlp");
 
         /// <summary>
-        /// Рабочий каталог yt-dlp и ffmpeg. Пусто — временный каталог системы;
-        /// в Docker сюда монтируется отдельный том, потому что временный каталог
-        /// контейнера — это его writable-слой, и двухгигабайтное видео растит его молча.
+        /// Рабочий каталог yt-dlp и ffmpeg. Пусто — временный каталог системы; в Docker
+        /// сюда монтируется том, иначе видео растёт в writable-слое контейнера.
         /// </summary>
         public string WorkDirectory
         {
@@ -82,8 +80,7 @@ public static class AppConfig
 
         /// <summary>
         /// Потолок на рабочий каталог, МБ: исходник плюс артефакты пережатия.
-        /// Настоящего предела у тома нет (обычному тому Docker размер не задать),
-        /// поэтому держит его сам бот — см. MediaWorkspace.
+        /// У обычного тома Docker размера нет, поэтому потолок держит сам бот.
         /// </summary>
         public int BudgetMb => GetInt(SectionName, nameof(BudgetMb), 3800);
 
@@ -93,8 +90,7 @@ public static class AppConfig
         public int MaxSourceMb => GetInt(SectionName, nameof(MaxSourceMb), 2048);
 
         /// <summary>
-        /// Максимальная длительность видео, минут: слот держится всю операцию,
-        /// и многочасовой ролик занял бы бота целиком.
+        /// Максимальная длительность видео, минут: слот держится всю операцию.
         /// </summary>
         public int MaxDurationMinutes => GetInt(SectionName, nameof(MaxDurationMinutes), 60);
 
@@ -109,10 +105,9 @@ public static class AppConfig
         public string YoutubeCookiesFile => Get(SectionName, nameof(YoutubeCookiesFile));
 
         /// <summary>
-        /// Дополнительные аргументы yt-dlp, разбиваются по пробелам. Осознанное исключение
-        /// из правила «командную строку собирает код»: пишет их администратор в своём
-        /// config.ini, и чинить обход антибот-проверки приходится быстрее, чем выходит
-        /// новая сборка. Модель сюда не пишет ничего.
+        /// Дополнительные аргументы yt-dlp, разбиваются по пробелам. Исключение из правила
+        /// «командную строку собирает код»: их пишет администратор, и чинить обход
+        /// антибот-проверки приходится быстрее, чем выходит новая сборка.
         /// </summary>
         public string YtDlpExtraArgs => Get(SectionName, nameof(YtDlpExtraArgs));
     }
@@ -126,9 +121,8 @@ public static class AppConfig
         public string ChatModel => Get(SectionName, "ChatModel", "gpt-5.5");
 
         /// <summary>
-        /// Дешёвая модель для одноразовых служебных запросов кастомных действий
-        /// (распознать попадание, формализовать запрос). Пусто — берём ChatModel:
-        /// работать будет так же, просто дороже и медленнее.
+        /// Дешёвая модель для служебных запросов кастомных действий (распознать
+        /// попадание, формализовать запрос). Пусто — берём ChatModel.
         /// </summary>
         public string InstantModel
         {
@@ -143,11 +137,9 @@ public static class AppConfig
         public int MaxTokens => GetInt(SectionName, "MaxTokens", 2048);
 
         /// <summary>
-        /// Глубина рассуждений модели в обычном чате: minimal, low, medium, high.
-        /// Значение вне списка означает «не передавать поле вовсе» — это и выключатель,
-        /// и защита от опечатки: неизвестный уровень бэкенд отвергает целиком,
-        /// и запрос падает. Служебные запросы кастомных действий уровень не получают:
-        /// там ответ «ДА» или «НЕТ», и думать над ним нечего.
+        /// Глубина рассуждений в обычном чате: minimal, low, medium, high. Значение вне
+        /// списка означает «не передавать поле вовсе» — иначе неизвестный уровень бэкенд
+        /// отверг бы вместе со всем запросом. Служебные запросы уровень не получают.
         /// </summary>
         public string ReasoningEffort => Get(SectionName, nameof(ReasoningEffort), "high");
 
@@ -175,8 +167,7 @@ public static class AppConfig
 
     /// <summary>
     /// Вотчер перечитки. Хранится полем не для использования, а чтобы жить: работающий
-    /// вотчер рантайм держит слабой ссылкой, и без укоренения сборщик мусора выключил бы
-    /// перечитку config.ini на лету.
+    /// вотчер рантайм держит слабой ссылкой, и без укоренения его соберёт GC.
     /// </summary>
     private static readonly FileSystemWatcher? _watcher;
 
@@ -223,7 +214,6 @@ public static class AppConfig
             return;
         }
 
-        // Ищем ключ внутри секции
         for (var i = sectionIndex + 1; i < lines.Count; i++)
         {
             var trimmed = lines[i].Trim();
@@ -231,7 +221,6 @@ public static class AppConfig
             // Следующая секция — ключ не найден
             if (trimmed.StartsWith('[') && trimmed.EndsWith(']'))
             {
-                // Вставляем перед следующей секцией
                 lines.Insert(i, $"{key}: {value}");
                 File.WriteAllLines(ConfigPath, lines);
                 return;
@@ -284,13 +273,11 @@ public static class AppConfig
         {
             var trimmed = line.Trim();
 
-            // Пустые строки и комментарии
             if (string.IsNullOrWhiteSpace(trimmed) || trimmed.StartsWith('#'))
             {
                 continue;
             }
 
-            // Заголовок секции: [NAME]
             if (trimmed.StartsWith('[') && trimmed.EndsWith(']'))
             {
                 FlushValue(sections, currentSection, currentKey, lines);

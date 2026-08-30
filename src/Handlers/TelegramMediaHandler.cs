@@ -15,9 +15,6 @@ namespace MewoDiscord.Handlers;
 /// </summary>
 public static partial class TelegramMediaHandler
 {
-    /// <summary>
-    /// Фирменный синий Telegram.
-    /// </summary>
     private static readonly Color _telegramBlue = new(0x2AABEE);
 
     private static readonly PostMediaHandler.PostStyle _style = new(

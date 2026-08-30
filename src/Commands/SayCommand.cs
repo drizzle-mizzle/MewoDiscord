@@ -14,8 +14,7 @@ public class SayCommand : InteractionModuleBase<SocketInteractionContext>
     {
         await Context.Channel.SendMessageAsync(text);
         // Текст в журнал обязателен: сообщение уходит от имени бота, и без него нельзя
-        // сопоставить реплику в чате с тем, кто её продиктовал. Тред команд видят
-        // только администраторы
+        // сопоставить реплику с тем, кто её продиктовал
         BotLogger.LogCommand(
             "{User} использовал /say в #{Channel}: {Text}",
             Context.User.Username, Context.Channel.Name, text);

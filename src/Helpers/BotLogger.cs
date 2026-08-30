@@ -58,7 +58,6 @@ public static partial class BotLogger
 
         try
         {
-            // Стартовое сообщение
             var chatGptStatus = AppConfig.UseChatGpt ? "включён ✅" : "выключен ❌";
 
             var startEmbed = new EmbedBuilder()
@@ -77,7 +76,6 @@ public static partial class BotLogger
 
             _threads[CommandsThreadKey] = cmdThread;
 
-            // Тред ChatGPT-части
             if (AppConfig.UseChatGpt)
             {
                 var thread = await channel.CreateThreadAsync(
@@ -166,7 +164,6 @@ public static partial class BotLogger
                 var timestamp = GetLocalNow().ToString("HH:mm:ss");
                 var text = $"`[{timestamp}]` {message}";
 
-                // Discord ограничение — 2000 символов; разбиваем на части
                 foreach (var chunk in SplitMessage(text))
                 {
                     await thread.SendMessageAsync(chunk, allowedMentions: AllowedMentions.None);
@@ -202,12 +199,10 @@ public static partial class BotLogger
                 break;
             }
 
-            // Ищем последний перенос строки в пределах лимита
             var cutAt = text.LastIndexOf('\n', maxLength - 1);
 
             if (cutAt <= 0)
             {
-                // Нет переноса — режем по лимиту
                 cutAt = maxLength;
             }
 

@@ -369,8 +369,6 @@ public static class BotMessages
             }
             else if (currentKey != null)
             {
-                // Строка без ключа продолжает предыдущее значение — так пишутся
-                // многострочные тексты (инструкции в несколько шагов)
                 lines.Add(trimmed);
             }
         }

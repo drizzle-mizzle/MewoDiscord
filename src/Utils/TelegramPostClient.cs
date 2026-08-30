@@ -42,9 +42,8 @@ public static partial class TelegramPostClient
             var html = await SocialMediaHttp.Http.GetStringAsync(url);
             var post = ParsePost(html);
 
-            // Страница пришла, а разобрать не вышло — скорее всего Telegram сменил вёрстку
-            // виджета. Молчание тут неотличимо от «не увидел ссылку», и причину искали бы
-            // в поиске ссылок, а не в разборе
+            // Страница пришла, а разобрать не вышло — скорее всего Telegram сменил
+            // вёрстку виджета. Без записи в лог это неотличимо от «не увидел ссылку»
             if (post == null && !string.IsNullOrWhiteSpace(html))
             {
                 BotLogger.Warning("Пост Telegram {Url} не разобрался: вёрстка виджета изменилась?", url);
@@ -60,7 +59,7 @@ public static partial class TelegramPostClient
     }
 
     /// <summary>
-    /// Разбирает HTML виджета. Внутренний метод — на нём держатся тесты парсинга.
+    /// Разбирает HTML виджета.
     /// </summary>
     internal static SocialPost? ParsePost(string html)
     {
@@ -124,8 +123,7 @@ public static partial class TelegramPostClient
     }
 
     /// <summary>
-    /// Время публикации. Не нашли или не разобрали — обойдёмся без даты: в подписи
-    /// её просто не будет.
+    /// Время публикации; не нашли или не разобрали — в подписи её просто не будет.
     /// </summary>
     private static DateTimeOffset? ReadDate(IDocument document)
     {
@@ -178,9 +176,8 @@ public static partial class TelegramPostClient
     }
 
     /// <summary>
-    /// Кладёт файл в список, пропуская повтор по адресу: один и тот же файл дважды
-    /// в посте — это дубль вёрстки, а не второе вложение. Страховка на случай, если
-    /// Telegram переименует класс размытой подложки.
+    /// Кладёт файл в список, пропуская повтор по адресу: один и тот же файл дважды —
+    /// это дубль вёрстки. Страховка на случай переименования класса размытой подложки.
     /// </summary>
     private static void AddMedia(List<SocialMedia> media, HashSet<string> seen, SocialMedia item)
     {

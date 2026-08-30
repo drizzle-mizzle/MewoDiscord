@@ -229,7 +229,7 @@ public class XPostTests
 
         Assert.NotNull(ladder);
 
-        // Про худший честно скажут «файл не влез» — это лучше молчания
+        // Не влезло ничего — остаётся худший вариант
         var post = await XPostClient.PickQualityAsync(
             ladder, maxBytes: 1024, _ => Task.FromResult<long?>(60L * 1024 * 1024));
 

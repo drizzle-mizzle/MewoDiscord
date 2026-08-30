@@ -9,9 +9,8 @@ namespace MewoDiscord.Commands;
 public class PurgeCommand : InteractionModuleBase<SocketInteractionContext>
 {
     /// <summary>
-    /// Сколько сообщений канала просматриваем, набирая нужное число сообщений автора.
-    /// Страховка от бездонного канала, где спрошенный человек давно не писал: десять
-    /// запросов истории — это недели переписки на нашем сервере.
+    /// Сколько сообщений канала просматриваем, набирая нужное число сообщений автора:
+    /// страховка от канала, где спрошенный человек давно не писал.
     /// </summary>
     private const int MaxScannedMessages = 1000;
 
@@ -50,10 +49,9 @@ public class PurgeCommand : InteractionModuleBase<SocketInteractionContext>
         {
             reply += "\n" + BotMessages.PurgeScanned(scanned.ToString());
 
-            // Набрали меньше, чем просили: без этой строки пользователь решит, что бот
-            // удалил не всё по своей прихоти. Причины две, и они разные: либо история
-            // кончилась (или упёрлась в границу двух недель), либо мы сами перестали
-            // листать, дойдя до потолка просмотра — там имеет смысл повторить
+            // Набрали меньше, чем просили. Причины две: история кончилась (или упёрлась
+            // в границу двух недель) либо мы сами перестали листать по MaxScannedMessages —
+            // во втором случае повтор команды имеет смысл
             if (deletable.Count < count)
             {
                 reply += "\n" + (exhausted
@@ -125,9 +123,8 @@ public class PurgeCommand : InteractionModuleBase<SocketInteractionContext>
         // Discord API не позволяет массово удалять сообщения старше 14 дней
         var cutoff = DateTimeOffset.UtcNow.AddDays(-14);
 
-        // Запрошенное начало старше границы двух недель — двигаем его, но молчать
-        // об этом нельзя: «удали с июля» ответило бы зелёным «удалено 37», умолчав,
-        // что месяц истории остался на месте
+        // Начало старше границы двух недель двигаем, но молчать об этом нельзя:
+        // «удали с июля» ответило бы зелёным «удалено 37», умолчав про месяц истории
         var clamped = fromUtc < cutoff;
 
         if (clamped)
@@ -135,7 +132,6 @@ public class PurgeCommand : InteractionModuleBase<SocketInteractionContext>
             fromUtc = cutoff;
         }
 
-        // Собираем сообщения в указанном диапазоне батчами
         var allMessages = new List<IMessage>();
         var fromSnowflake = SnowflakeUtils.ToSnowflake(fromUtc);
         const int batchSize = 100;
@@ -152,7 +148,6 @@ public class PurgeCommand : InteractionModuleBase<SocketInteractionContext>
 
             allMessages.AddRange(list);
 
-            // Если пришло меньше batchSize или последнее сообщение уже за пределами toUtc — выходим
             var batchList = batch.ToList();
 
             if (batchList.Count < batchSize || batchList.Last().CreatedAt > toUtc)
