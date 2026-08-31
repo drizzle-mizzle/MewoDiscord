@@ -10,7 +10,7 @@ public class MediaShrinkTests
 {
     private const long TenMb = 10L * 1024 * 1024;
 
-    private static readonly FfmpegRunner.MediaInfo FullHd = new(
+    private static readonly FfmpegRunner.MediaInfo _fullHd = new(
         1920,
         1080,
         3600,
@@ -21,7 +21,7 @@ public class MediaShrinkTests
     public void Media_ЦелевойБитрейтСчитаетсяИзРазмераИДлины()
     {
         // Десять мегабайт на 36 секунд — это около 2.3 Мбит/с на всё вместе
-        var plan = MediaShrink.PlanVideo(FullHd, 36, TenMb);
+        var plan = MediaShrink.PlanVideo(_fullHd, 36, TenMb);
 
         Assert.NotNull(plan);
         Assert.InRange(plan.VideoBitrateBps + plan.AudioBitrateBps, 2_200_000, 2_400_000);
@@ -35,7 +35,7 @@ public class MediaShrinkTests
     [Fact]
     public void Media_РазрешениеПадаетВместеСБитрейтом()
     {
-        var plan = MediaShrink.PlanVideo(FullHd, 600, 25L * 1024 * 1024);
+        var plan = MediaShrink.PlanVideo(_fullHd, 600, 25L * 1024 * 1024);
 
         Assert.NotNull(plan);
 
@@ -51,7 +51,7 @@ public class MediaShrinkTests
     [Fact]
     public void Media_ЧастотаКадровНеВышеТридцати()
     {
-        var sixty = FullHd with
+        var sixty = _fullHd with
         {
             Video = new FfmpegRunner.VideoStreamInfo("h264", 1920, 1080, 60, 8_000_000)
         };
@@ -68,7 +68,7 @@ public class MediaShrinkTests
     public void Media_СлишкомДлинноеВидеоНеЖмётся()
     {
         // Три часа в десять мегабайт — это семь килобит в секунду, то есть ничего
-        Assert.Null(MediaShrink.PlanVideo(FullHd, 10800, TenMb));
+        Assert.Null(MediaShrink.PlanVideo(_fullHd, 10800, TenMb));
         Assert.False(MediaShrink.CanFitVideo(10800, TenMb));
 
         // А тридцать шесть секунд в те же десять мегабайт — вполне
@@ -79,7 +79,7 @@ public class MediaShrinkTests
     public void Media_СледующаяПопыткаКорректируетсяПоФакту()
     {
         var previous = new FfmpegRunner.EncodeSettings(3_000_000, 128_000, 1280, 720, 30);
-        var next = MediaShrink.CorrectVideo(previous, 14L * 1024 * 1024, TenMb, FullHd);
+        var next = MediaShrink.CorrectVideo(previous, 14L * 1024 * 1024, TenMb, _fullHd);
 
         Assert.NotNull(next);
 
@@ -91,7 +91,7 @@ public class MediaShrinkTests
     public void Media_ДикийЗамерНеУтаскиваетСледующийКруг()
     {
         var previous = new FfmpegRunner.EncodeSettings(3_000_000, 128_000, 1280, 720, 30);
-        var next = MediaShrink.CorrectVideo(previous, 100L * 1024 * 1024, TenMb, FullHd);
+        var next = MediaShrink.CorrectVideo(previous, 100L * 1024 * 1024, TenMb, _fullHd);
 
         Assert.NotNull(next);
 

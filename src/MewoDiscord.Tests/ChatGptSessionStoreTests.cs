@@ -11,7 +11,7 @@ namespace MewoDiscord.Tests;
 [Collection("state-directory")]
 public class ChatGptSessionStoreTests : IDisposable
 {
-    private static readonly byte[] PngBytes = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+    private static readonly byte[] _pngBytes = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
 
     private readonly string _stateDirectory;
 
@@ -43,7 +43,7 @@ public class ChatGptSessionStoreTests : IDisposable
     {
         var entry = ChatGptSessionStore.Create(1, 2, 100);
         entry.Runtime.Append(new ChatGptClient.ChatTurn("user", "нарисуй кота", []));
-        entry.Runtime.LastImage = new ChatGptClient.GeneratedImage(PngBytes, "image/png", "рыжий кот");
+        entry.Runtime.LastImage = new ChatGptClient.GeneratedImage(_pngBytes, "image/png", "рыжий кот");
         ChatGptSessionStore.Rebind(entry, 200);
 
         // Перезагрузка с диска — как после рестарта бота
@@ -57,7 +57,7 @@ public class ChatGptSessionStoreTests : IDisposable
         Assert.Single(restored.Runtime.History);
         Assert.Equal("нарисуй кота", restored.Runtime.History[0].Text);
         Assert.NotNull(restored.Runtime.LastImage);
-        Assert.Equal(PngBytes, restored.Runtime.LastImage.Content);
+        Assert.Equal(_pngBytes, restored.Runtime.LastImage.Content);
         Assert.Equal("рыжий кот", restored.Runtime.LastImage.RevisedPrompt);
     }
 

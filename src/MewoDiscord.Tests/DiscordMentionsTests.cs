@@ -8,7 +8,7 @@ namespace MewoDiscord.Tests;
 /// </summary>
 public class DiscordMentionsTests
 {
-    private static readonly Dictionary<ulong, string> Names = new()
+    private static readonly Dictionary<ulong, string> _names = new()
     {
         [111] = "Флауэр",
         [222] = "Мяу",
@@ -16,7 +16,7 @@ public class DiscordMentionsTests
         [444] = "Иван"
     };
 
-    private static readonly Dictionary<string, ulong> Mentionable = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly Dictionary<string, ulong> _mentionable = new(StringComparer.OrdinalIgnoreCase)
     {
         ["Флауэр"] = 111,
         ["Мяу"] = 222,
@@ -29,16 +29,16 @@ public class DiscordMentionsTests
     {
         Assert.Equal(
             "измени @Флауэр аватарку",
-            DiscordMentions.Humanize("измени <@111> аватарку", id => Names.GetValueOrDefault(id)));
+            DiscordMentions.Humanize("измени <@111> аватарку", id => _names.GetValueOrDefault(id)));
 
         // Формат с восклицательным знаком (старые ники) — тоже упоминание
-        Assert.Equal("@Мяу привет", DiscordMentions.Humanize("<@!222> привет", id => Names.GetValueOrDefault(id)));
+        Assert.Equal("@Мяу привет", DiscordMentions.Humanize("<@!222> привет", id => _names.GetValueOrDefault(id)));
 
         // Неизвестный пользователь остаётся как есть: сырой id лучше потерянного смысла
-        Assert.Equal("кто это <@999>", DiscordMentions.Humanize("кто это <@999>", id => Names.GetValueOrDefault(id)));
+        Assert.Equal("кто это <@999>", DiscordMentions.Humanize("кто это <@999>", id => _names.GetValueOrDefault(id)));
 
         // Роли и каналы не трогаем
-        Assert.Equal("<@&555> в <#777>", DiscordMentions.Humanize("<@&555> в <#777>", id => Names.GetValueOrDefault(id)));
+        Assert.Equal("<@&555> в <#777>", DiscordMentions.Humanize("<@&555> в <#777>", id => _names.GetValueOrDefault(id)));
     }
 
     [Fact]
@@ -60,7 +60,7 @@ public class DiscordMentionsTests
     [Fact]
     public void Mentions_ОтветМоделиВозвращаетНастоящиеУпоминания()
     {
-        var (text, mentioned) = DiscordMentions.Restore("@Флауэр ты большой молодец", Mentionable);
+        var (text, mentioned) = DiscordMentions.Restore("@Флауэр ты большой молодец", _mentionable);
 
         Assert.Equal("<@111> ты большой молодец", text);
         Assert.Equal([111ul], mentioned);
@@ -69,7 +69,7 @@ public class DiscordMentionsTests
     [Fact]
     public void Mentions_ДлинноеИмяПобеждаетКороткое()
     {
-        var (text, mentioned) = DiscordMentions.Restore("привет, @Иван Петрович!", Mentionable);
+        var (text, mentioned) = DiscordMentions.Restore("привет, @Иван Петрович!", _mentionable);
 
         Assert.Equal("привет, <@333>!", text);
         Assert.Equal([333ul], mentioned);
@@ -79,7 +79,7 @@ public class DiscordMentionsTests
     public void Mentions_ЧастичноеСовпадениеНеЛовится()
     {
         // «@Иванов» — не «@Иван»: имя обязано кончаться на границе слова
-        var (text, mentioned) = DiscordMentions.Restore("@Иванов пришёл", Mentionable);
+        var (text, mentioned) = DiscordMentions.Restore("@Иванов пришёл", _mentionable);
 
         Assert.Equal("@Иванов пришёл", text);
         Assert.Empty(mentioned);
@@ -89,7 +89,7 @@ public class DiscordMentionsTests
     public void Mentions_ЧужиеИменаНеУпоминаются()
     {
         // Модель может назвать кого угодно, но упоминанием станут только участники обмена
-        var (text, mentioned) = DiscordMentions.Restore("@Постороннийчеловек, привет", Mentionable);
+        var (text, mentioned) = DiscordMentions.Restore("@Постороннийчеловек, привет", _mentionable);
 
         Assert.Equal("@Постороннийчеловек, привет", text);
         Assert.Empty(mentioned);
@@ -98,7 +98,7 @@ public class DiscordMentionsTests
     [Fact]
     public void Mentions_ПовторОдногоЧеловекаСчитаетсяОдин()
     {
-        var (text, mentioned) = DiscordMentions.Restore("@Мяу и ещё раз @Мяу", Mentionable);
+        var (text, mentioned) = DiscordMentions.Restore("@Мяу и ещё раз @Мяу", _mentionable);
 
         Assert.Equal("<@222> и ещё раз <@222>", text);
         Assert.Equal([222ul], mentioned);
@@ -107,7 +107,7 @@ public class DiscordMentionsTests
     [Fact]
     public void Mentions_ТекстБезУпоминанийНеТрогается()
     {
-        var (text, mentioned) = DiscordMentions.Restore("просто ответ без обращений", Mentionable);
+        var (text, mentioned) = DiscordMentions.Restore("просто ответ без обращений", _mentionable);
 
         Assert.Equal("просто ответ без обращений", text);
         Assert.Empty(mentioned);

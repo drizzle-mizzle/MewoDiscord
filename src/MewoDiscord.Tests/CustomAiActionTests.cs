@@ -10,7 +10,7 @@ namespace MewoDiscord.Tests;
 /// </summary>
 public class CustomAiActionTests
 {
-    private static readonly string[] SampleAction =
+    private static readonly string[] _sampleAction =
     [
         "# комментарий",
         "[ACTION]",
@@ -29,7 +29,7 @@ public class CustomAiActionTests
     [Fact]
     public void Action_ФайлДействияРазбирается()
     {
-        var action = CustomAiActionStore.Parse("edit_profile_picture", SampleAction);
+        var action = CustomAiActionStore.Parse("edit_profile_picture", _sampleAction);
 
         Assert.NotNull(action);
         Assert.Equal("edit_profile_picture", action.Id);
@@ -43,7 +43,7 @@ public class CustomAiActionTests
     [Fact]
     public void Action_ПлейсхолдерПодставляется()
     {
-        var action = CustomAiActionStore.Parse("edit_profile_picture", SampleAction);
+        var action = CustomAiActionStore.Parse("edit_profile_picture", _sampleAction);
 
         Assert.NotNull(action);
         var prompt = action.HitPrompt.Replace(CustomAiActionStore.MessagePlaceholder, "добавь @Флауэр ушки");

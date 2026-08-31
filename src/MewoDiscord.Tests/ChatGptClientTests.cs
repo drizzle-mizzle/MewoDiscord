@@ -16,9 +16,9 @@ public class ChatGptClientTests
     /// <summary>
     /// PNG-сигнатура — минимальное «содержимое картинки» для тестов.
     /// </summary>
-    private static readonly byte[] PngBytes = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+    private static readonly byte[] _pngBytes = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
 
-    private static readonly byte[] JpegBytes = [0xFF, 0xD8, 0xFF, 0xE0];
+    private static readonly byte[] _jpegBytes = [0xFF, 0xD8, 0xFF, 0xE0];
 
     private readonly ITestOutputHelper _testOutputHelper;
 
@@ -48,10 +48,10 @@ public class ChatGptClientTests
     [Fact]
     public void Gpt_DataUrlСодержитMimeИBase64()
     {
-        var url = ChatGptClient.BuildDataUrl("image/png", PngBytes);
+        var url = ChatGptClient.BuildDataUrl("image/png", _pngBytes);
 
         Assert.StartsWith("data:image/png;base64,", url);
-        Assert.Equal(PngBytes, Convert.FromBase64String(url[(url.IndexOf(',') + 1)..]));
+        Assert.Equal(_pngBytes, Convert.FromBase64String(url[(url.IndexOf(',') + 1)..]));
     }
 
     [Theory]
@@ -69,8 +69,8 @@ public class ChatGptClientTests
     [Fact]
     public void Gpt_MimeОпределяетсяПоСигнатуре()
     {
-        Assert.Equal("image/png", ChatGptClient.DetectImageMime(PngBytes));
-        Assert.Equal("image/jpeg", ChatGptClient.DetectImageMime(JpegBytes));
+        Assert.Equal("image/png", ChatGptClient.DetectImageMime(_pngBytes));
+        Assert.Equal("image/jpeg", ChatGptClient.DetectImageMime(_jpegBytes));
         Assert.Equal("image/gif", ChatGptClient.DetectImageMime("GIF89a"u8.ToArray()));
         Assert.Equal("image/webp", ChatGptClient.DetectImageMime("RIFF0000WEBP"u8.ToArray()));
         Assert.Null(ChatGptClient.DetectImageMime("просто текст"u8.ToArray()));
@@ -80,7 +80,7 @@ public class ChatGptClientTests
     public void Gpt_ЯвныйMimeИмеетПриоритет()
     {
         // Расширение и сигнатура говорят JPEG, но явный тип важнее
-        var file = new ChatGptClient.InputFile("cat.jpg", JpegBytes, "image/webp");
+        var file = new ChatGptClient.InputFile("cat.jpg", _jpegBytes, "image/webp");
 
         Assert.Equal("image/webp", ChatGptClient.ResolveImageMime(file));
     }
@@ -99,7 +99,7 @@ public class ChatGptClientTests
     [Fact]
     public void Gpt_КартинкаУходитВDataUrl()
     {
-        var file = new ChatGptClient.InputFile("cat.png", PngBytes);
+        var file = new ChatGptClient.InputFile("cat.png", _pngBytes);
         var turn = ChatGptClient.PrepareUserTurn("Что на картинке?", [file]);
 
         // Имена картинок модель видит строкой шапки: сами файлы уходят отдельными частями
@@ -114,8 +114,8 @@ public class ChatGptClientTests
         var turn = ChatGptClient.PrepareUserTurn(
             "@bot добавь ей шляпку",
             [
-                new ChatGptClient.InputFile("cat1.png", PngBytes),
-                new ChatGptClient.InputFile("cat2.png", PngBytes)
+                new ChatGptClient.InputFile("cat1.png", _pngBytes),
+                new ChatGptClient.InputFile("cat2.png", _pngBytes)
             ],
             new ChatGptClient.ChatContext("bot", "user2", "user1", "смотрите, моя кошка"));
 
@@ -131,7 +131,7 @@ public class ChatGptClientTests
     {
         var session = new ChatGptSession
         {
-            LastImage = new ChatGptClient.GeneratedImage(PngBytes, "image/png", null)
+            LastImage = new ChatGptClient.GeneratedImage(_pngBytes, "image/png", null)
         };
 
         // Без новых картинок прошлая подмешивается — иначе не поправить нарисованное
@@ -139,7 +139,7 @@ public class ChatGptClientTests
         Assert.StartsWith("data:image/png;base64,", ChatGptClient.ResolveCarryImage(session, edit));
 
         // Пользователь принёс свою картинку — предмет разговора теперь она
-        var withOwn = ChatGptClient.PrepareUserTurn("а этой добавь ушки", [new ChatGptClient.InputFile("gif.png", PngBytes)]);
+        var withOwn = ChatGptClient.PrepareUserTurn("а этой добавь ушки", [new ChatGptClient.InputFile("gif.png", _pngBytes)]);
         Assert.Null(ChatGptClient.ResolveCarryImage(session, withOwn));
 
         // Пустая сессия — подмешивать нечего
@@ -234,7 +234,7 @@ public class ChatGptClientTests
     [Fact]
     public void Gpt_ЧатСКартинкойСериализуетсяМассивомЧастей()
     {
-        var dataUrl = ChatGptClient.BuildDataUrl("image/png", PngBytes);
+        var dataUrl = ChatGptClient.BuildDataUrl("image/png", _pngBytes);
         var turn = new ChatGptClient.ChatTurn("user", "что тут?", [dataUrl]);
         var json = ChatGptClient.BuildChatRequestJson("gpt-5.5", 2048, [], turn);
 
@@ -279,7 +279,7 @@ public class ChatGptClientTests
     public void Gpt_КартинкиИзОтветаЧатаИзвлекаются()
     {
         // Прокси кладёт нарисованное моделью в message.images, а не в content
-        var dataUrl = ChatGptClient.BuildDataUrl("image/png", PngBytes);
+        var dataUrl = ChatGptClient.BuildDataUrl("image/png", _pngBytes);
         var json = """{"choices":[{"message":{"role":"assistant","content":"Готово","images":[{"type":"image_url","index":0,"image_url":{"url":"URL"}}]}}]}"""
             .Replace("URL", dataUrl);
 
@@ -287,7 +287,7 @@ public class ChatGptClientTests
 
         Assert.Equal("Готово", reply.Text);
         Assert.Single(reply.Images);
-        Assert.Equal(PngBytes, reply.Images[0].Content);
+        Assert.Equal(_pngBytes, reply.Images[0].Content);
         Assert.Equal("image/png", reply.Images[0].MimeType);
     }
 
@@ -298,14 +298,14 @@ public class ChatGptClientTests
         Assert.Null(ChatGptClient.ParseImageDataUrl("https://example.com/cat.png"));
         Assert.Null(ChatGptClient.ParseImageDataUrl("data:image/png,без-base64"));
         Assert.Null(ChatGptClient.ParseImageDataUrl("data:image/png;base64,не-base64!"));
-        Assert.NotNull(ChatGptClient.ParseImageDataUrl(ChatGptClient.BuildDataUrl("image/png", PngBytes)));
+        Assert.NotNull(ChatGptClient.ParseImageDataUrl(ChatGptClient.BuildDataUrl("image/png", _pngBytes)));
     }
 
     [Fact]
     public void Gpt_ПоследняяКартинкаПодмешиваетсяВЗапрос()
     {
         var turn = new ChatGptClient.ChatTurn("user", "сделай его рыжим", []);
-        var carry = ChatGptClient.BuildDataUrl("image/png", PngBytes);
+        var carry = ChatGptClient.BuildDataUrl("image/png", _pngBytes);
 
         // Без carry картинок в запросе нет
         Assert.DoesNotContain("image_url", ChatGptClient.BuildChatRequestJson("gpt-5.5", 100, [], turn));
@@ -319,7 +319,7 @@ public class ChatGptClientTests
     [Fact]
     public void Gpt_АссистентскийХодОписываетКартинки()
     {
-        var image = new ChatGptClient.GeneratedImage(PngBytes, "image/png", null);
+        var image = new ChatGptClient.GeneratedImage(_pngBytes, "image/png", null);
 
         // Только текст — как есть
         Assert.Equal("привет", ChatGptClient.BuildAssistantTurnText(new ChatGptClient.ChatReply("привет", [])));
@@ -440,7 +440,7 @@ public class ChatGptClientTests
     {
         var session = new ChatGptSession();
         session.Append(new ChatGptClient.ChatTurn("user", "привет", []));
-        session.LastImage = new ChatGptClient.GeneratedImage(PngBytes, "image/png", null);
+        session.LastImage = new ChatGptClient.GeneratedImage(_pngBytes, "image/png", null);
 
         session.Reset();
 

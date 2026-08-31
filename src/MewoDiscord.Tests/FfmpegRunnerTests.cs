@@ -8,14 +8,14 @@ namespace MewoDiscord.Tests;
 /// </summary>
 public class FfmpegRunnerTests
 {
-    private static readonly FfmpegRunner.MediaInfo Source = new(1920, 1080, 30);
+    private static readonly FfmpegRunner.MediaInfo _source = new(1920, 1080, 30);
 
     private static string Args(
         FfmpegRunner.MediaPlan plan,
         string format = "mp4",
         FfmpegRunner.MediaInfo? info = null,
         FfmpegRunner.MediaLimits? limits = null) =>
-        string.Join(' ', FfmpegRunner.BuildArguments(plan, info ?? Source, format, "in.mp4", "out." + format, limits));
+        string.Join(' ', FfmpegRunner.BuildArguments(plan, info ?? _source, format, "in.mp4", "out." + format, limits));
 
     [Fact]
     public void Media_ОбрезкаПоВремениСчитаетсяДлительностью()
@@ -77,14 +77,14 @@ public class FfmpegRunnerTests
     [Fact]
     public void Media_КропЗажимаетсяВГраницыКадра()
     {
-        var clamped = FfmpegRunner.ClampCrop(new FfmpegRunner.CropBox(1800, 1000, 500, 500), Source);
+        var clamped = FfmpegRunner.ClampCrop(new FfmpegRunner.CropBox(1800, 1000, 500, 500), _source);
 
         Assert.NotNull(clamped);
         Assert.Equal(120, clamped.Width);
         Assert.Equal(80, clamped.Height);
 
         // Отрицательные координаты модель тоже иногда присылает
-        var negative = FfmpegRunner.ClampCrop(new FfmpegRunner.CropBox(-50, -50, 200, 200), Source);
+        var negative = FfmpegRunner.ClampCrop(new FfmpegRunner.CropBox(-50, -50, 200, 200), _source);
         Assert.NotNull(negative);
         Assert.Equal(0, negative.X);
         Assert.Equal(0, negative.Y);
@@ -179,7 +179,7 @@ public class FfmpegRunnerTests
             FfmpegRunner.BuildEncodeArguments(
                 new FfmpegRunner.EncodeSettings(CopyStreams: true),
                 new FfmpegRunner.MediaPlan(),
-                Source,
+                _source,
                 "mp4",
                 "in.mp4",
                 "out.mp4"));
@@ -196,7 +196,7 @@ public class FfmpegRunnerTests
             FfmpegRunner.BuildEncodeArguments(
                 new FfmpegRunner.EncodeSettings(1_500_000, 96_000, 1280, 720, 30),
                 new FfmpegRunner.MediaPlan(),
-                Source,
+                _source,
                 "mp4",
                 "in.mp4",
                 "out.mp4"));
