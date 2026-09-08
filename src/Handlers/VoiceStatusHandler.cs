@@ -274,7 +274,7 @@ public static class VoiceStatusHandler
     }
 
     /// <summary>
-    /// Пишет сообщение в журнал сессии канала и следом — длительность разговора.
+    /// Пишет сообщение в журнал сессии канала, дописывая к нему длительность разговора.
     /// Журнала может не быть — статусный канал не настроен или сессия ещё не открыта, —
     /// и тогда это тихий no-op.
     /// </summary>
@@ -288,19 +288,23 @@ public static class VoiceStatusHandler
             return null;
         }
 
-        var message = await target.SendMessageAsync(text,
+        // Длительность — хвостом того же сообщения через пустую строку. Отдельным
+        // сообщением она удваивала бы поток событий в треде
+        var message = await target.SendMessageAsync(
+            $"{text}\n\n{BotMessages.VoiceSessionDuration(SessionDuration(channelId))}",
             allowedMentions: mentions ?? _noMentions,
             components: components);
 
-        await SendDurationAsync(channelId, target);
+        // Здесь же заводится сторож тишины, поэтому одноразового таймера хватает:
+        // каждая напечатанная длительность заводит следующий
+        ScheduleIdleDuration(channelId);
 
         return message;
     }
 
     /// <summary>
-    /// Длительность разговора отдельным сообщением, парой к каждой строке журнала.
-    /// Здесь же заводится сторож тишины, поэтому одноразового таймера хватает: каждая
-    /// напечатанная длительность заводит следующий. В общий чат не уходит.
+    /// Длительность разговора отдельным сообщением: так она печатается только в молчащей
+    /// сессии, где дописать её не к чему. В общий чат не уходит.
     /// </summary>
     private static async Task SendDurationAsync(ulong channelId, IMessageChannel target)
     {
