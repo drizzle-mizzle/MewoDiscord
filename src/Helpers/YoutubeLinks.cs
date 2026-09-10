@@ -27,6 +27,31 @@ public static partial class YoutubeLinks
     }
 
     /// <summary>
+    /// Идентификаторы всех видео в тексте — без повторов, в порядке появления, не больше max.
+    /// </summary>
+    public static IReadOnlyList<string> VideoIds(string text, int max)
+    {
+        var result = new List<string>();
+
+        foreach (Match match in LinkRegex().Matches(text))
+        {
+            var id = match.Groups["id"].Value;
+
+            if (!result.Contains(id))
+            {
+                result.Add(id);
+            }
+
+            if (result.Count >= max)
+            {
+                break;
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
     /// Адрес, который мы отдаём yt-dlp. Строится кодом из проверенного идентификатора:
     /// исходная строка пользователя в аргументы не попадает никогда. Список аргументов
     /// спасает от подстановки команд, но не от строки с дефисом впереди (это подстановка

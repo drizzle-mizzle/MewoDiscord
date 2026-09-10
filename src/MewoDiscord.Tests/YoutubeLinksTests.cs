@@ -53,6 +53,18 @@ public class YoutubeLinksTests
         Assert.Null(YoutubeLinks.FirstVideoId("https://www.youtube.com/watch?v=dQw4w9WgXcQEXTRA"));
     }
 
+    [Fact]
+    public void Media_ВсеВидеоИзТекстаБезПовторов()
+    {
+        const string text =
+            "https://youtu.be/dQw4w9WgXcQ и ещё https://www.youtube.com/shorts/_-abcDEF123, "
+            + "снова первое youtube.com/watch?v=dQw4w9WgXcQ&t=42s и третье https://youtu.be/aaaaaaaaaaa "
+            + "и четвёртое https://youtu.be/bbbbbbbbbbb";
+
+        Assert.Equal(["dQw4w9WgXcQ", "_-abcDEF123", "aaaaaaaaaaa"], YoutubeLinks.VideoIds(text, 3));
+        Assert.Empty(YoutubeLinks.VideoIds("https://www.youtube.com/@somechannel", 3));
+    }
+
     [Theory]
     [InlineData("скачай https://youtu.be/dQw4w9WgXcQ", true)]
     [InlineData("обрежь с 1:04 по 1:40 youtube.com/watch?v=dQw4w9WgXcQ", true)]

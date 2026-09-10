@@ -55,6 +55,26 @@ public class BotMessagesTests
         Assert.Equal("первая строка\nвторая строка", parsed["Multi"]);
     }
 
+    [Theory]
+    [InlineData(1, "ViewsOne")]
+    [InlineData(21, "ViewsOne")]
+    [InlineData(101, "ViewsOne")]
+    [InlineData(2, "ViewsFew")]
+    [InlineData(4, "ViewsFew")]
+    [InlineData(22, "ViewsFew")]
+    [InlineData(0, "ViewsMany")]
+    [InlineData(5, "ViewsMany")]
+    [InlineData(11, "ViewsMany")]
+    [InlineData(12, "ViewsMany")]
+    [InlineData(14, "ViewsMany")]
+    [InlineData(111, "ViewsMany")]
+    [InlineData(1_813_879_918, "ViewsMany")]
+    public void Messages_ФормаСловаСогласуетсяСЧислом(long count, string expected)
+    {
+        // 11–14 кончаются на 1–4, но по-русски это «просмотров»
+        Assert.Equal(expected, BotMessages.PluralKey("Views", count));
+    }
+
     [Fact]
     public void Messages_МусорДоПервогоКлючаИгнорируется()
     {

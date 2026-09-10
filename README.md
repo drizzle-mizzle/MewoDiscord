@@ -22,6 +22,10 @@ Discord bot for a small friend server. Built with .NET 10.0 and [Discord.NET](ht
   fetches the post, downloads its video or photos and replies with a blue Components V2 container that
   plays the media inline next to the post caption; files above the server upload limit are linked with a
   preview instead, and Discord's own link preview is suppressed on the original message
+- **YouTube stats** — Discord's own YouTube preview stays untouched (it carries the player, and a bot
+  cannot embed one anywhere); the bot replies under it with a thin red embed: likes, dislikes estimated
+  by Return YouTube Dislike, views and the publish date, plus the full title when Discord's preview
+  truncated it. No API keys: the title and date come from the watch page, the numbers from RYD
 - **Admin slash commands** — bulk message deletion, speaking as the bot and reinstalling the command list
 - **ChatGPT sessions** — `/chatgpt new` pins a session to the bot's reply; replying to that message
   continues the conversation, so several chats can run side by side in one channel. Requests go through
@@ -106,7 +110,8 @@ dotnet test --filter "FullyQualifiedName~Regex_|FullyQualifiedName~Store_|FullyQ
 The `Regex_*` (profanity filter), `Store_*` (channel-name database), `Telegram_*` (widget parsing and
 link detection), `Watcher_*` (channel rename decisions), `Gpt_*` (ChatGPT client and session database),
 `Messages_*` (message file parsing), `Action_*` (custom action files), `Mentions_*` (mention translation)
-and `Media_*` (ffmpeg arguments, yt-dlp format selection, compression math and YouTube link recognition)
+and `Media_*` (ffmpeg arguments, yt-dlp format selection, compression math, YouTube link recognition
+and YouTube preview parsing)
 tests are self-contained and need no network — neither ffmpeg nor yt-dlp is ever launched. The `АИ_Гпт*`
 tests talk to a running CLIProxyAPI; the remaining `АИ_*` ones target the dormant OpenRouter code and
 only work if its sections are restored to `config.ini`.

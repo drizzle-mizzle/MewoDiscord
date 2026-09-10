@@ -142,6 +142,21 @@ public static class BotMessages
     public static string XTooBig(string size, string url) =>
         Format(nameof(XTooBig), ("{size}", size), ("{url}", url));
 
+    public static string YoutubePreviewTitle(string title) =>
+        Format(nameof(YoutubePreviewTitle), ("{title}", title));
+
+    public static string YoutubePreviewVotes(string likes, string dislikes) =>
+        Format(nameof(YoutubePreviewVotes), ("{likes}", likes), ("{dislikes}", dislikes));
+
+    /// <summary>
+    /// Просмотры: слово согласуется с числом, см. <see cref="PluralKey"/>.
+    /// </summary>
+    public static string YoutubePreviewViews(long count, string views) =>
+        Format(PluralKey(nameof(YoutubePreviewViews), count), ("{views}", views));
+
+    public static string YoutubeFooter() =>
+        Format(nameof(YoutubeFooter));
+
     public static string ChatGptLoginInstructions(string url) =>
         Format(nameof(ChatGptLoginInstructions), ("{url}", url));
 
@@ -386,6 +401,28 @@ public static class BotMessages
         }
 
         lines.Clear();
+    }
+
+    /// <summary>
+    /// Ключ русской формы слова при числе: «1 просмотр», «3 просмотра», «5 просмотров».
+    /// Форм три, и в messages.ini они лежат ключами с суффиксами One, Few и Many.
+    /// Решают две последние цифры: 11–14 — всегда Many, хотя и кончаются на 1–4.
+    /// </summary>
+    internal static string PluralKey(string key, long count)
+    {
+        var lastTwo = Math.Abs(count % 100);
+
+        if (lastTwo is >= 11 and <= 14)
+        {
+            return key + "Many";
+        }
+
+        return (lastTwo % 10) switch
+        {
+            1 => key + "One",
+            >= 2 and <= 4 => key + "Few",
+            _ => key + "Many"
+        };
     }
 
     private static string Format(string key, params (string placeholder, string value)[] replacements)
