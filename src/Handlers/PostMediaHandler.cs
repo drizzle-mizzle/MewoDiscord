@@ -41,6 +41,14 @@ public static partial class PostMediaHandler
     private static readonly SemaphoreSlim _slots = new(2, 2);
 
     /// <summary>
+    /// Сколько раз перепроверять, не появилось ли родное превью, и с каким шагом:
+    /// вместе это около десяти секунд слежки за сообщением.
+    /// </summary>
+    private const int MaxEmbedRechecks = 3;
+
+    private static readonly TimeSpan _embedRecheckInterval = TimeSpan.FromSeconds(3);
+
+    /// <summary>
     /// Оформление ответа: у каждого источника своя акцентная полоса, подпись, иконка
     /// и текст про невлезший файл.
     /// </summary>
@@ -66,14 +74,14 @@ public static partial class PostMediaHandler
 
         _ = Task.Run(async () =>
         {
+            var replied = false;
+
             // Обработка идёт на любое сообщение со ссылкой и держит в памяти скачанные
             // файлы: без общего потолка десяток ссылок подряд множит буферы линейно
             await _slots.WaitAsync();
 
             try
             {
-                var replied = false;
-
                 foreach (var request in requests)
                 {
                     try
@@ -85,16 +93,17 @@ public static partial class PostMediaHandler
                         BotLogger.Error("Ошибка обработки ссылки {Url}: {Message}", request.Url, ex.Message);
                     }
                 }
-
-                // Своё оформление показали — стандартное превью Discord больше не нужно
-                if (replied)
-                {
-                    await SuppressSourceEmbedsAsync(message);
-                }
             }
             finally
             {
                 _slots.Release();
+            }
+
+            // Своё оформление показали — стандартное превью Discord больше не нужно.
+            // Слежка за ним идёт уже без слота: она ждёт секунды, а слот нужен скачиванию
+            if (replied)
+            {
+                await SuppressSourceEmbedsAsync(message);
             }
         });
     }
@@ -338,6 +347,11 @@ public static partial class PostMediaHandler
     /// Убирает стандартное превью Discord из исходного сообщения: его заменил наш ответ.
     /// Само превью не удаляется, а помечается флагом SuppressEmbeds — единственное, что
     /// Discord позволяет боту сделать с чужим сообщением, и только с правом «Управление сообщениями».
+    /// Превью Discord дорисовывает уже после доставки сообщения и бывает, что позже нашего
+    /// ответа, а флаг, поставленный до него, превью не гасит. Поэтому гасим только
+    /// появившееся: нет его — проверяем снова каждые <see cref="_embedRecheckInterval"/>,
+    /// не больше <see cref="MaxEmbedRechecks"/> раз. Discord.NET дописывает пришедшее превью
+    /// в тот же объект сообщения, так что перечитывать его embed'ы достаточно.
     /// </summary>
     private static async Task SuppressSourceEmbedsAsync(SocketUserMessage message)
     {
@@ -348,6 +362,16 @@ public static partial class PostMediaHandler
         {
             BotLogger.Warning("Нет права управлять сообщениями в #{Channel} — превью осталось", message.Channel.Name);
             return;
+        }
+
+        for (var recheck = 0; message.Embeds.Count == 0; recheck++)
+        {
+            if (recheck == MaxEmbedRechecks)
+            {
+                return;
+            }
+
+            await Task.Delay(_embedRecheckInterval);
         }
 
         try

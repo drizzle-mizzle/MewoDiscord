@@ -115,6 +115,45 @@ public class YoutubePreviewTests
     }
 
     [Fact]
+    public void Media_ВидеоИзDataApi()
+    {
+        // Числа Data API отдаёт строками
+        var video = YoutubeVideoClient.ParseApiVideo(
+            $$$"""
+            {"items":[{"id":"{{{Id}}}","snippet":{"publishedAt":"2009-10-25T06:57:33Z","title":"{{{Title}}}"},
+            "statistics":{"viewCount":"1814007818","likeCount":"19381264","commentCount":"2400000"}}]}
+            """);
+
+        Assert.NotNull(video);
+        Assert.Equal(Title, video.Title);
+        Assert.Equal(new DateTimeOffset(2009, 10, 25, 6, 57, 33, TimeSpan.Zero), video.PublishedAt);
+        Assert.Equal(1_814_007_818, video.Views);
+        Assert.Equal(19_381_264, video.Likes);
+    }
+
+    [Fact]
+    public void Media_DataApiБезЛайковИБезВидео()
+    {
+        // Автор скрыл лайки — их нет, а не ноль
+        var hidden = YoutubeVideoClient.ParseApiVideo(
+            """{"items":[{"snippet":{"title":"Видео"},"statistics":{"viewCount":"10"}}]}""");
+
+        Assert.NotNull(hidden);
+        Assert.Null(hidden.Likes);
+        Assert.Equal(10, hidden.Views);
+        Assert.Null(hidden.PublishedAt);
+
+        // Удалённое или выдуманное видео — пустой список, а не ошибка
+        Assert.Null(YoutubeVideoClient.ParseApiVideo("""{"kind":"youtube#videoListResponse","items":[]}"""));
+        Assert.Null(YoutubeVideoClient.ParseApiVideo("не json"));
+
+        Assert.Equal(
+            "API key not valid. Please pass a valid API key.",
+            YoutubeVideoClient.ParseApiError(
+                """{"error":{"code":400,"message":"API key not valid. Please pass a valid API key."}}"""));
+    }
+
+    [Fact]
     public void Media_ПолноеНазваниеТолькоКогдаПревьюЕгоОбрезало()
     {
         // Так Discord кладёт в embed длинное название: оборванным, с тремя точками

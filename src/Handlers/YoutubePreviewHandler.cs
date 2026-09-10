@@ -170,12 +170,21 @@ public static class YoutubePreviewHandler
             blocks.Add(BotMessages.YoutubePreviewTitle(Format.Sanitize(info.Title)));
         }
 
-        if (info.Votes != null)
+        var stats = new List<string>();
+
+        if (info.Likes != null && info.Dislikes != null)
         {
-            blocks.Add(
-                BotMessages.YoutubePreviewVotes(FormatCount(info.Votes.Likes), FormatCount(info.Votes.Dislikes))
-                + "\n"
-                + BotMessages.YoutubePreviewViews(info.Votes.Views, FormatCount(info.Votes.Views)));
+            stats.Add(BotMessages.YoutubePreviewVotes(FormatCount(info.Likes.Value), FormatCount(info.Dislikes.Value)));
+        }
+
+        if (info.Views != null)
+        {
+            stats.Add(BotMessages.YoutubePreviewViews(info.Views.Value, FormatCount(info.Views.Value)));
+        }
+
+        if (stats.Count > 0)
+        {
+            blocks.Add(string.Join("\n", stats));
         }
 
         if (blocks.Count == 0)

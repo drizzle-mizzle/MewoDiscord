@@ -21,6 +21,12 @@ public static class AppConfig
     public static string LocalTimeZone => Get("COMMON", nameof(LocalTimeZone), "Europe/Kiev");
 
     /// <summary>
+    /// Ключ YouTube Data API v3 для превью YouTube: название, дата, лайки и просмотры.
+    /// Пусто — сведения берутся со страницы видео, а с IP дата-центра она приходит без даты.
+    /// </summary>
+    public static string YoutubeApiKey => Get("COMMON", nameof(YoutubeApiKey));
+
+    /// <summary>
     /// Путь к ffmpeg и ffprobe для операций над медиа. По умолчанию — из PATH:
     /// в docker-образе они ставятся пакетом, локально нужны на машине разработчика.
     /// </summary>

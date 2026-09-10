@@ -25,7 +25,9 @@ Discord bot for a small friend server. Built with .NET 10.0 and [Discord.NET](ht
 - **YouTube stats** — Discord's own YouTube preview stays untouched (it carries the player, and a bot
   cannot embed one anywhere); the bot replies under it with a thin red embed: likes, dislikes estimated
   by Return YouTube Dislike, views and the publish date, plus the full title when Discord's preview
-  truncated it. No API keys: the title and date come from the watch page, the numbers from RYD
+  truncated it. The title, date, likes and views come from the YouTube Data API when `YoutubeApiKey` is
+  set; without a key the bot falls back to the watch page, which YouTube strips of the date for
+  datacenter IPs. Dislikes always come from RYD
 - **Admin slash commands** — bulk message deletion, speaking as the bot and reinstalling the command list
 - **ChatGPT sessions** — `/chatgpt new` pins a session to the bot's reply; replying to that message
   continues the conversation, so several chats can run side by side in one channel. Requests go through
@@ -66,6 +68,7 @@ API. Their prompts are archived in `src/Files/ai_prompts.legacy.ini`.
    | `LogsChannel` | no | Text channel ID for bot logs and the ChatGPT request thread; `0` disables it |
    | `GeneralChatChannel` | no | Text channel ID that common events are relayed to (conversation start/end and stream start in public voice channels); `0` disables it |
    | `LocalTimeZone` | no | IANA time zone used by `/purge by-time` and log timestamps |
+   | `YoutubeApiKey` | no | YouTube Data API v3 key for YouTube previews; without it previews on a server IP have no publish date |
    | `UseChatGpt` | no (default `false`) | Master switch for the ChatGPT part: sessions, the `/chatgpt` commands and the log thread |
    | `ChatGptProxyUrl`, `ChatGptProxyApiKey` | if `UseChatGpt: true` | Address and client key of the CLIProxyAPI sidecar |
    | `ChatGptManagementKey` | if `UseChatGpt: true` | Password of the proxy management API, used by `/chatgpt-auth login` |
