@@ -18,6 +18,8 @@ public static class BotEmotes
 
     private const string XName = "x_logo";
 
+    private const string YoutubeName = "youtube";
+
     /// <summary>
     /// Логотип Telegram. null — эмодзи не завелось (нет прав, нет картинки),
     /// и подписи останутся без иконки.
@@ -25,6 +27,8 @@ public static class BotEmotes
     public static Emote? Telegram { get; private set; }
 
     public static Emote? X { get; private set; }
+
+    public static Emote? Youtube { get; private set; }
 
     /// <summary>
     /// Тот же логотип картинкой — для иконки футера embed'а, куда разметка эмодзи не годится:
@@ -52,6 +56,7 @@ public static class BotEmotes
 
         Telegram = await ResolveAsync(client, existing, TelegramName, "telegram.png");
         X = await ResolveAsync(client, existing, XName, "x.png");
+        Youtube = await ResolveAsync(client, existing, YoutubeName, "youtube.png");
     }
 
     /// <summary>

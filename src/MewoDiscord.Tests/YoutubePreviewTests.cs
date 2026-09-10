@@ -1,3 +1,5 @@
+using Discord;
+
 using MewoDiscord.Handlers;
 using MewoDiscord.Utils;
 
@@ -113,11 +115,36 @@ public class YoutubePreviewTests
     }
 
     [Fact]
-    public void Media_ПолноеНазваниеТолькоКогдаПревьюЕгоОбрежет()
+    public void Media_ПолноеНазваниеТолькоКогдаПревьюЕгоОбрезало()
     {
-        Assert.False(YoutubePreviewHandler.NeedsFullTitle(new string('а', YoutubePreviewHandler.NativeTitleLimit)));
-        Assert.True(YoutubePreviewHandler.NeedsFullTitle(new string('а', YoutubePreviewHandler.NativeTitleLimit + 1)));
-        Assert.True(YoutubePreviewHandler.NeedsFullTitle(Title));
+        // Так Discord кладёт в embed длинное название: оборванным, с тремя точками
+        Assert.True(YoutubePreviewHandler.NeedsFullTitle(
+            "Очень длинное название видео, которое не влезло в превью",
+            "Очень длинное название видео, котор..."));
+
+        // Длинное, но целиком — дублировать незачем
+        Assert.False(YoutubePreviewHandler.NeedsFullTitle(Title, Title));
+
+        // Превью нет вовсе — название больше нигде не видно
+        Assert.True(YoutubePreviewHandler.NeedsFullTitle("Коротко", nativeTitle: null));
+    }
+
+    [Fact]
+    public void Media_ЗаголовокПревьюНаходитсяПоВидео()
+    {
+        var embeds = new[]
+        {
+            new EmbedBuilder().WithUrl($"https://www.youtube.com/watch?v={Id}").WithTitle("Rick Astley - Never...").Build(),
+            new EmbedBuilder().WithUrl("https://x.com/user/status/1").WithTitle("Чужое превью").Build(),
+
+            // Превью без заголовка названия не показывает — как будто его нет
+            new EmbedBuilder().WithUrl("https://www.youtube.com/watch?v=aaaaaaaaaaa").WithDescription("…").Build()
+        };
+
+        var titles = YoutubePreviewHandler.NativeTitles(embeds, [Id, "aaaaaaaaaaa"]);
+
+        Assert.Single(titles);
+        Assert.Equal("Rick Astley - Never...", titles[Id]);
     }
 
     [Theory]

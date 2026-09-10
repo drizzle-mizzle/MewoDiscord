@@ -116,6 +116,22 @@ tests are self-contained and need no network — neither ffmpeg nor yt-dlp is ev
 tests talk to a running CLIProxyAPI; the remaining `АИ_*` ones target the dormant OpenRouter code and
 only work if its sections are restored to `config.ini`.
 
+## Dev bot
+
+`src/MewoDiscord.DevBot` is a small debugging console app that reads Discord with the production bot's
+token, over REST only. It never opens a gateway session, so it receives no events, cannot answer
+anything and does not touch the bot's presence — it is safe to run next to the live bot. Every command
+is read-only. Put the token into `src/MewoDiscord.DevBot/devbot.ini` (see `devbot.example.ini`; the
+file is ignored by git and Docker), then from the repository root:
+
+```bash
+dotnet run --project src/MewoDiscord.DevBot -- message <message link> [--raw]
+dotnet run --project src/MewoDiscord.DevBot -- recent <channel link or id> [N]
+```
+
+`message` prints the author, text, flags and the raw JSON of embeds and components — what Discord
+actually stored, not how the client drew it.
+
 ## Docker
 
 The image is built from source; `config.ini` is kept out of the image and mounted read-only instead.

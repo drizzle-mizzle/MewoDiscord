@@ -8,4 +8,5 @@
 **/.idea
 *.md
 src/Files/config.ini
+src/MewoDiscord.DevBot/
 cliproxy/

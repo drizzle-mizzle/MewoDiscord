@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
-    <DefaultItemExcludes>$(DefaultItemExcludes);MewoDiscord.Tests\**</DefaultItemExcludes>
+    <DefaultItemExcludes>$(DefaultItemExcludes);MewoDiscord.Tests\**;MewoDiscord.DevBot\**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>

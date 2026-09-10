@@ -5,6 +5,7 @@ publish/
 
 ## Secrets
 src/Files/config.ini
+src/MewoDiscord.DevBot/devbot.ini
 cliproxy/management.env
 cliproxy/config.yaml
 state/youtube_cookies.txt

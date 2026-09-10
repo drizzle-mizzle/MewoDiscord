@@ -16,14 +16,16 @@ namespace MewoDiscord.Handlers;
 /// </summary>
 public static class YoutubePreviewHandler
 {
-    /// <summary>
-    /// Сколько символов названия родное превью показывает целиком: длиннее — обрывает
-    /// многоточием. YouTube отдаёт Discord название полностью, режет уже сам Discord,
-    /// и порог взят из наблюдения, а не из документации.
-    /// </summary>
-    internal const int NativeTitleLimit = 37;
-
     private static readonly Color _youtubeRed = new(0xFF0000);
+
+    /// <summary>
+    /// Сколько ещё ждать родное превью, если к концу наших запросов его нет: Discord
+    /// дорисовывает его уже после доставки сообщения. Не дождались — превью, видимо,
+    /// нет вовсе, и полное название показываем: иначе его не видно нигде.
+    /// </summary>
+    private static readonly TimeSpan _nativePreviewWait = TimeSpan.FromSeconds(5);
+
+    private static readonly TimeSpan _nativePreviewPoll = TimeSpan.FromMilliseconds(500);
 
     /// <summary>
     /// Разряды разделяются неразрывным пробелом, как принято по-русски. Формат свой,
@@ -63,9 +65,34 @@ public static class YoutubePreviewHandler
     }
 
     /// <summary>
-    /// Полное название нужно, только когда родное превью его обрезало.
+    /// Полное название нужно, только когда родное превью показало не его. Discord кладёт
+    /// в embed длинное название уже оборванным, с многоточием, а порог у него
+    /// не документирован и считается не в символах — поэтому сравниваем с тем, что он
+    /// показал. Превью нет вовсе — название больше нигде не видно.
     /// </summary>
-    internal static bool NeedsFullTitle(string title) => title.Length > NativeTitleLimit;
+    internal static bool NeedsFullTitle(string title, string? nativeTitle) =>
+        nativeTitle == null || !string.Equals(nativeTitle.Trim(), title.Trim(), StringComparison.Ordinal);
+
+    /// <summary>
+    /// Заголовки родных превью по идентификатору видео. Превью узнаём по адресу:
+    /// у YouTube в нём ссылка на само видео.
+    /// </summary>
+    internal static Dictionary<string, string> NativeTitles(IEnumerable<Embed> embeds, IReadOnlyCollection<string> videoIds)
+    {
+        var titles = new Dictionary<string, string>();
+
+        foreach (var embed in embeds)
+        {
+            var id = embed.Url == null ? null : YoutubeLinks.FirstVideoId(embed.Url);
+
+            if (id != null && embed.Title != null && videoIds.Contains(id))
+            {
+                titles.TryAdd(id, embed.Title);
+            }
+        }
+
+        return titles;
+    }
 
     internal static string FormatCount(long count) => count.ToString("N0", _counts);
 
@@ -78,11 +105,19 @@ public static class YoutubePreviewHandler
 
     private static async Task ReplyAsync(SocketUserMessage message, IReadOnlyList<string> videoIds)
     {
-        var infos = await Task.WhenAll(videoIds.Select(YoutubeVideoClient.TryGetAsync));
+        var infos = (await Task.WhenAll(videoIds.Select(YoutubeVideoClient.TryGetAsync)))
+            .OfType<YoutubeVideoClient.VideoInfo>()
+            .ToList();
+
+        if (infos.Count == 0)
+        {
+            return;
+        }
+
+        var nativeTitles = await WaitNativeTitlesAsync(message, infos.Select(info => info.Id).ToList());
 
         var embeds = infos
-            .OfType<YoutubeVideoClient.VideoInfo>()
-            .Select(BuildEmbed)
+            .Select(info => BuildEmbed(info, nativeTitles.GetValueOrDefault(info.Id)))
             .OfType<Embed>()
             .ToArray();
 
@@ -98,33 +133,60 @@ public static class YoutubePreviewHandler
     }
 
     /// <summary>
+    /// Ждёт родные превью. Discord дописывает их в то же сообщение уже после доставки,
+    /// а Discord.NET обновляет закэшированный объект на месте — поэтому достаточно
+    /// перечитывать его embed'ы, пока не найдутся все или не выйдет срок.
+    /// </summary>
+    private static async Task<Dictionary<string, string>> WaitNativeTitlesAsync(
+        SocketUserMessage message, IReadOnlyList<string> videoIds)
+    {
+        var deadline = DateTime.UtcNow + _nativePreviewWait;
+
+        while (true)
+        {
+            var titles = NativeTitles(message.Embeds, videoIds);
+
+            if (titles.Count == videoIds.Count || DateTime.UtcNow >= deadline)
+            {
+                return titles;
+            }
+
+            await Task.Delay(_nativePreviewPoll);
+        }
+    }
+
+    /// <summary>
     /// Собирает embed. null — показать нечего: название превью показало целиком, а голоса
     /// не пришли. Одной даты в подписи на отдельное сообщение мало.
     /// </summary>
-    private static Embed? BuildEmbed(YoutubeVideoClient.VideoInfo info)
+    private static Embed? BuildEmbed(YoutubeVideoClient.VideoInfo info, string? nativeTitle)
     {
-        var lines = new List<string>();
+        // Название и цифры — отдельными абзацами. Пустую строку внутри значения
+        // messages.ini не записать, поэтому её ставит код
+        var blocks = new List<string>();
 
-        if (NeedsFullTitle(info.Title))
+        if (NeedsFullTitle(info.Title, nativeTitle))
         {
-            lines.Add(BotMessages.YoutubePreviewTitle(Format.Sanitize(info.Title)));
+            blocks.Add(BotMessages.YoutubePreviewTitle(Format.Sanitize(info.Title)));
         }
 
         if (info.Votes != null)
         {
-            lines.Add(BotMessages.YoutubePreviewVotes(FormatCount(info.Votes.Likes), FormatCount(info.Votes.Dislikes)));
-            lines.Add(BotMessages.YoutubePreviewViews(info.Votes.Views, FormatCount(info.Votes.Views)));
+            blocks.Add(
+                BotMessages.YoutubePreviewVotes(FormatCount(info.Votes.Likes), FormatCount(info.Votes.Dislikes))
+                + "\n"
+                + BotMessages.YoutubePreviewViews(info.Votes.Views, FormatCount(info.Votes.Views)));
         }
 
-        if (lines.Count == 0)
+        if (blocks.Count == 0)
         {
             return null;
         }
 
         var embed = new EmbedBuilder()
             .WithColor(_youtubeRed)
-            .WithDescription(string.Join("\n", lines))
-            .WithFooter(BotMessages.YoutubeFooter());
+            .WithDescription(string.Join("\n\n", blocks))
+            .WithFooter(BotMessages.YoutubeFooter(), BotEmotes.IconUrl(BotEmotes.Youtube));
 
         if (info.PublishedAt != null)
         {

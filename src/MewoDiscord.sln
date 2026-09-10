@@ -4,6 +4,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MewoDiscord", "MewoDiscord.
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MewoDiscord.Tests", "MewoDiscord.Tests\MewoDiscord.Tests.csproj", "{1328955A-ED8C-45DA-B1CE-F3C878705C8A}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MewoDiscord.DevBot", "MewoDiscord.DevBot\MewoDiscord.DevBot.csproj", "{F48535A0-BEFC-4BF4-9A0C-6BEEF6B81CCA}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -38,6 +40,18 @@ Global
 		{1328955A-ED8C-45DA-B1CE-F3C878705C8A}.Release|x64.Build.0 = Release|Any CPU
 		{1328955A-ED8C-45DA-B1CE-F3C878705C8A}.Release|x86.ActiveCfg = Release|Any CPU
 		{1328955A-ED8C-45DA-B1CE-F3C878705C8A}.Release|x86.Build.0 = Release|Any CPU
+		{F48535A0-BEFC-4BF4-9A0C-6BEEF6B81CCA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F48535A0-BEFC-4BF4-9A0C-6BEEF6B81CCA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F48535A0-BEFC-4BF4-9A0C-6BEEF6B81CCA}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{F48535A0-BEFC-4BF4-9A0C-6BEEF6B81CCA}.Debug|x64.Build.0 = Debug|Any CPU
+		{F48535A0-BEFC-4BF4-9A0C-6BEEF6B81CCA}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{F48535A0-BEFC-4BF4-9A0C-6BEEF6B81CCA}.Debug|x86.Build.0 = Debug|Any CPU
+		{F48535A0-BEFC-4BF4-9A0C-6BEEF6B81CCA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F48535A0-BEFC-4BF4-9A0C-6BEEF6B81CCA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F48535A0-BEFC-4BF4-9A0C-6BEEF6B81CCA}.Release|x64.ActiveCfg = Release|Any CPU
+		{F48535A0-BEFC-4BF4-9A0C-6BEEF6B81CCA}.Release|x64.Build.0 = Release|Any CPU
+		{F48535A0-BEFC-4BF4-9A0C-6BEEF6B81CCA}.Release|x86.ActiveCfg = Release|Any CPU
+		{F48535A0-BEFC-4BF4-9A0C-6BEEF6B81CCA}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

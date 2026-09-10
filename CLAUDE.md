@@ -58,11 +58,13 @@
     `Handlers/ChatGptSessionHandler`. Там же роутится и медиа-сессия
     (`Helpers/MediaSessionStore`): реплай на результат операции над файлом — просьба
     поправить его же
-  - `Files/` — `config.ini`, `messages.ini`, `swears.txt`, логотипы соцсетей `telegram.png`
-    и `x.png`, архив промптов отключённой ИИ-части `ai_prompts.legacy.ini`, каталог кастомных
+  - `Files/` — `config.ini`, `messages.ini`, `swears.txt`, логотипы соцсетей `telegram.png`,
+    `x.png` и `youtube.png`, архив промптов отключённой ИИ-части `ai_prompts.legacy.ini`, каталог кастомных
     действий `custom_ai_actions/` (копируются в вывод)
   - `MewoDiscord.Tests/` — xUnit-тесты: фильтр мата, БД имён каналов, разбор постов Telegram,
     клиент ChatGPT
+  - `MewoDiscord.DevBot/` — dev-бот для отладки с dev-машины: читает сообщения тем же токеном,
+    что и боевой (см. «Dev-бот»)
 - `cliproxy/` — конфиг sidecar-прокси: `config.yaml` и `management.env` (секреты, вне git)
   плюс их example-файлы; токены Codex OAuth живут в томе `cliproxy-auth`
 - Публикация: `publish/MewoDiscord/`
@@ -211,9 +213,13 @@
   а компонента со встроенным плеером в Components V2 нет. Вместо замены — довесок реплаем:
   тонкий красный embed с голосами, просмотрами и датой публикации в подписи (слот
   `WithTimestamp`, как у запасного embed'а X и Telegram). Полное название — **только когда
-  превью его обрезало**: Discord обрывает многоточием названия длиннее `NativeTitleLimit`.
-  YouTube отдаёт ему название целиком, режет сам Discord, так что порог — наблюдение,
-  а не документация. Показать нечего (название короткое, голоса не пришли) — бот молчит:
+  превью его обрезало**. Discord кладёт в embed название, уже оборванное многоточием, и порог
+  у него не документирован и считается не в символах: 56 латинских символов влезают целиком,
+  а 36 символов кириллицы — уже нет. Поэтому решает сравнение с заголовком самого превью
+  (`message.Embeds`), а не длина. Превью Discord дорисовывает уже после доставки сообщения:
+  к концу наших запросов оно обычно на месте, а нет — ждём ещё немного. Не дождались —
+  превью нет вовсе (ссылка в угловых скобках, превью убрано), и полное название показываем:
+  иначе его не видно нигде. Показать нечего (название целиком в превью, голоса не пришли) — бот молчит:
   одной даты на отдельное сообщение мало. Сообщение с упоминанием бота при `UseChatGpt: true`
   пропускается: «@бот скачай ‹ссылка›» ждёт файл, а не справку.
   Источники без ключей, каждый за своё. Страница просмотра — название и дата из разметки
@@ -526,6 +532,23 @@ YouTube и условие гейта, разбор `--dump-single-json` и вы�
 ```bash
 dotnet test --filter "FullyQualifiedName~Regex_|FullyQualifiedName~Store_|FullyQualifiedName~Telegram_|FullyQualifiedName~X_|FullyQualifiedName~Watcher_|FullyQualifiedName~Gpt_|FullyQualifiedName~Messages_|FullyQualifiedName~Action_|FullyQualifiedName~Mentions_|FullyQualifiedName~Media_|FullyQualifiedName~Events_"
 ```
+
+### Dev-бот
+
+`src/MewoDiscord.DevBot` — консольная утилита для отладки: читает Discord тем же токеном, что и боевой
+бот, но **только через REST**. К шлюзу она не подключается, поэтому не получает событий, не может
+на них ответить и не трогает статус бота — запускать её рядом с работающим продом безопасно.
+Команды только читают, отправки нет намеренно. Нужна там, где важно, что на самом деле лежит
+в сообщении, а не как его нарисовал клиент: embed'ы, компоненты, флаги. Токен —
+в `src/MewoDiscord.DevBot/devbot.ini` (вне git и вне docker-контекста, образец — `devbot.example.ini`).
+Из корня репозитория:
+```bash
+dotnet run --project src/MewoDiscord.DevBot -- message <ссылка на сообщение> [--raw]
+dotnet run --project src/MewoDiscord.DevBot -- message <id сервера> <id сообщения>
+dotnet run --project src/MewoDiscord.DevBot -- recent <ссылка на канал | id канала> [N]
+```
+Без ссылки, по одному id сообщения, поиск обходит все каналы и треды сервера — это сотня
+запросов, так что ссылка быстрее.
 
 ## Конфигурация
 

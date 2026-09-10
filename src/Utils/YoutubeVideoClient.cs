@@ -42,7 +42,7 @@ public static class YoutubeVideoClient
     /// <summary>
     /// Что известно о видео. Название есть всегда: без него видео не считается найденным.
     /// </summary>
-    public record VideoInfo(string Title, Votes? Votes, DateTimeOffset? PublishedAt);
+    public record VideoInfo(string Id, string Title, Votes? Votes, DateTimeOffset? PublishedAt);
 
     /// <summary>
     /// Голоса и просмотры приходят одним ответом, поэтому и живут вместе: либо есть все, либо ничего.
@@ -70,21 +70,27 @@ public static class YoutubeVideoClient
         var page = await pageTask;
         var title = page?.Title ?? await TryGetOEmbedTitleAsync(videoId);
 
-        return title == null ? null : new VideoInfo(title, await votesTask, page?.PublishedAt);
+        return title == null ? null : new VideoInfo(videoId, title, await votesTask, page?.PublishedAt);
     }
 
     private static async Task<PageInfo?> TryGetPageAsync(string videoId)
     {
         try
         {
-            var page = ParsePage(await GetFromYoutubeAsync(YoutubeLinks.WatchUrl(videoId)), videoId);
+            var (html, finalUrl) = await GetFromYoutubeAsync(YoutubeLinks.WatchUrl(videoId));
+            var page = ParsePage(html, videoId);
 
-            // Пропавшая дата без записи в лог неотличима от «так и задумано», а причин
-            // у неё несколько: удалённое видео, подсунутая вместо страницы проверка,
-            // сменившаяся вёрстка
-            if (page == null)
+            // Пропавшая дата без записи в лог неотличима от «так и задумано». Главные улики —
+            // куда привели переадресации и заголовок пришедшей страницы: вместо страницы
+            // видео YouTube бывает отдаёт согласие с куки или проверку на робота
+            if (page?.PublishedAt == null)
             {
-                BotLogger.Warning("Страница видео YouTube {Id} не разобралась", videoId);
+                BotLogger.Warning(
+                    "Страница видео YouTube {Id} пришла без даты: {Url}, {Length} символов, заголовок «{Title}»",
+                    videoId,
+                    finalUrl?.ToString() ?? "?",
+                    html.Length,
+                    _parser.ParseDocument(html).Title ?? string.Empty);
             }
 
             return page;
@@ -126,7 +132,7 @@ public static class YoutubeVideoClient
 
         try
         {
-            return ParseOEmbedTitle(await GetFromYoutubeAsync(url));
+            return ParseOEmbedTitle((await GetFromYoutubeAsync(url)).Body);
         }
         catch (Exception ex)
         {
@@ -135,7 +141,11 @@ public static class YoutubeVideoClient
         }
     }
 
-    private static async Task<string> GetFromYoutubeAsync(string url)
+    /// <summary>
+    /// Запрос к самому YouTube. Вместе с телом отдаёт адрес, куда в итоге привели
+    /// переадресации: по нему видно, что вместо страницы видео подсунули согласие с куки.
+    /// </summary>
+    private static async Task<(string Body, Uri? FinalUrl)> GetFromYoutubeAsync(string url)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.TryAddWithoutValidation("Cookie", ConsentCookie);
@@ -144,7 +154,7 @@ public static class YoutubeVideoClient
         using var response = await SocialMediaHttp.Http.SendAsync(request);
         response.EnsureSuccessStatusCode();
 
-        return await response.Content.ReadAsStringAsync();
+        return (await response.Content.ReadAsStringAsync(), response.RequestMessage?.RequestUri);
     }
 
     /// <summary>
