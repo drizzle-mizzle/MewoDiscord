@@ -172,14 +172,14 @@ public static class YoutubePreviewHandler
 
         var stats = new List<string>();
 
-        if (info.Likes != null && info.Dislikes != null)
-        {
-            stats.Add(BotMessages.YoutubePreviewVotes(FormatCount(info.Likes.Value), FormatCount(info.Dislikes.Value)));
-        }
-
         if (info.Views != null)
         {
             stats.Add(BotMessages.YoutubePreviewViews(info.Views.Value, FormatCount(info.Views.Value)));
+        }
+
+        if (info.Likes != null && info.Dislikes != null)
+        {
+            stats.Add(BotMessages.YoutubePreviewVotes(FormatCount(info.Likes.Value), FormatCount(info.Dislikes.Value)));
         }
 
         if (stats.Count > 0)
