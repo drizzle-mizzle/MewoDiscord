@@ -8,12 +8,13 @@ namespace MewoDiscord.Utils;
 /// <summary>
 /// Клиент ChatGPT через CLIProxyAPI — локальный OpenAI-совместимый прокси, который расходует
 /// квоту подписки ChatGPT Plus (Codex OAuth) вместо API-биллинга.
-/// Единственный путь — POST /v1/chat/completions: прокси подмешивает в запрос инструмент
-/// image_generation, поэтому модель сама решает, ответить текстом или нарисовать картинку,
-/// как в веб-интерфейсе. Прокси stateless, история диалога живёт
+/// Обычный путь — POST /v1/chat/completions: прокси подмешивает в запрос инструмент
+/// image_generation, поэтому модель сама решает, ответить текстом или нарисовать картинку.
+/// При UseWebSearch чат идёт через POST /v1/responses с web_search и image_generation,
+/// а прежний путь остаётся запасным. Прокси stateless, история диалога живёт
 /// в <see cref="ChatGptSession"/> на нашей стороне.
 /// </summary>
-public static class ChatGptClient
+public static partial class ChatGptClient
 {
     private const string ChatCompletionsPath = "/v1/chat/completions";
 
@@ -141,39 +142,88 @@ public static class ChatGptClient
 
         var carry = ResolveCarryImage(session, turn);
         var effort = NormalizeEffort(cfg.ReasoningEffort);
+        var systemPrompt = BuildSystemPrompt(context?.BotName);
+        ChatReply? reply = null;
+        var searchUsed = false;
 
-        var json = BuildChatRequestJson(
-            cfg.ChatModel,
-            cfg.MaxTokens,
-            session.History,
-            turn,
-            BuildSystemPrompt(context?.BotName),
-            carry,
-            effort);
-
-        BotLogger.LogAi(
-            BotLogger.ChatGptThreadKey,
-            "📤 Чат ({Model}, рассуждения: {Effort}, картинок: {Images}):\n{Text}",
-            cfg.ChatModel,
-            effort ?? "по умолчанию",
-            turn.ImageDataUrls.Count,
-            turn.Text);
-
-        var response = await PostJsonAsync(ChatCompletionsPath, json);
-
-        if (response.Body == null)
+        if (cfg.UseWebSearch)
         {
-            // Отказ авторизации доносим до вызывающего: при отозванном токене
-            // нужен перелогин администратора, а не повтор запроса
-            return response.Unauthorized ? _emptyReply with { Unauthorized = true } : _emptyReply;
+            var responsesJson = BuildResponsesRequestJson(
+                cfg.ChatModel,
+                cfg.MaxTokens,
+                session.History,
+                turn,
+                systemPrompt,
+                carry,
+                effort);
+
+            BotLogger.LogAi(
+                BotLogger.ChatGptThreadKey,
+                "📤 Чат + web_search ({Model}, рассуждения: {Effort}, картинок: {Images}):\n{Text}",
+                cfg.ChatModel,
+                effort ?? "по умолчанию",
+                turn.ImageDataUrls.Count,
+                turn.Text);
+
+            var responses = await PostJsonAsync(ResponsesPath, responsesJson);
+
+            if (responses.Unauthorized)
+            {
+                return _emptyReply with { Unauthorized = true };
+            }
+
+            if (responses.Body != null)
+            {
+                var parsed = ParseResponsesResponse(responses.Body);
+
+                if (parsed.Reply.Text.Length > 0 || parsed.Reply.Images.Count > 0)
+                {
+                    reply = parsed.Reply;
+                    searchUsed = parsed.SearchUsed;
+                }
+            }
+
+            if (reply == null)
+            {
+                BotLogger.Warning("Responses API не дал ответа — обычный чат повторяется через Chat Completions");
+            }
         }
 
-        var reply = ParseChatResponse(response.Body);
-
-        if (reply.Text.Length == 0 && reply.Images.Count == 0)
+        if (reply == null)
         {
-            BotLogger.LogAi(BotLogger.ChatGptThreadKey, "⚠️ Пустой ответ от ChatGPT");
-            return _emptyReply;
+            var json = BuildChatRequestJson(
+                cfg.ChatModel,
+                cfg.MaxTokens,
+                session.History,
+                turn,
+                systemPrompt,
+                carry,
+                effort);
+
+            BotLogger.LogAi(
+                BotLogger.ChatGptThreadKey,
+                "📤 Чат ({Model}, рассуждения: {Effort}, картинок: {Images}):\n{Text}",
+                cfg.ChatModel,
+                effort ?? "по умолчанию",
+                turn.ImageDataUrls.Count,
+                turn.Text);
+
+            var response = await PostJsonAsync(ChatCompletionsPath, json);
+
+            if (response.Body == null)
+            {
+                // Отказ авторизации доносим до вызывающего: при отозванном токене
+                // нужен перелогин администратора, а не повтор запроса
+                return response.Unauthorized ? _emptyReply with { Unauthorized = true } : _emptyReply;
+            }
+
+            reply = ParseChatResponse(response.Body);
+
+            if (reply.Text.Length == 0 && reply.Images.Count == 0)
+            {
+                BotLogger.LogAi(BotLogger.ChatGptThreadKey, "⚠️ Пустой ответ от ChatGPT");
+                return _emptyReply;
+            }
         }
 
         session.Append(turn);
@@ -182,6 +232,11 @@ public static class ChatGptClient
         if (reply.Images.Count > 0)
         {
             session.LastImage = reply.Images[^1];
+        }
+
+        if (searchUsed)
+        {
+            BotLogger.LogAi(BotLogger.ChatGptThreadKey, "🌐 Модель использовала встроенный веб-поиск");
         }
 
         BotLogger.LogAi(BotLogger.ChatGptThreadKey, "📥 Ответ (картинок: {Images}):\n{Reply}", reply.Images.Count, reply.Text.Length > 0 ? reply.Text : "(без текста)");

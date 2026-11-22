@@ -32,7 +32,8 @@ Discord bot for a small friend server. Built with .NET 10.0 and [Discord.NET](ht
 - **ChatGPT sessions** — `/chatgpt new` pins a session to the bot's reply; replying to that message
   continues the conversation, so several chats can run side by side in one channel. Requests go through
   a CLIProxyAPI sidecar backed by a ChatGPT Plus subscription, and the model decides on its own whether
-  to answer with text or draw a picture, exactly like the web UI
+  to answer with text or draw a picture, exactly like the web UI. With `UseWebSearch` enabled, the model
+  can also search the web and its source citations become clickable links in the Discord reply
 - **Custom AI actions** — a ping can mean "do it", not just "talk". A cheap system gate runs first
   (no network), then a per-action prompt goes to a cheap instant model that answers yes or no; the first
   action that hits takes over. Actions are flat ini files in `Files/custom_ai_actions/`, one per file,
@@ -73,7 +74,11 @@ API. Their prompts are archived in `src/Files/ai_prompts.legacy.ini`.
    | `ChatGptProxyUrl`, `ChatGptProxyApiKey` | if `UseChatGpt: true` | Address and client key of the CLIProxyAPI sidecar |
    | `ChatGptManagementKey` | if `UseChatGpt: true` | Password of the proxy management API, used by `/chatgpt-auth login` |
 
-   The `[CHATGPT_SETTINGS]` section holds the chat model, token limit and system prompt.
+   The `[CHATGPT_SETTINGS]` section holds the chat model, token limit and system prompt. Set
+   `UseWebSearch: true` to let regular chats use OpenAI's built-in web search through the Responses API;
+   the default is `false`. Image generation remains available in the same session. If the proxy or model
+   rejects that API, the bot falls back to the previous Chat Completions flow, which answers without web
+   search. Instant requests used by custom AI actions always use Chat Completions.
 
 4. Run:
 ```bash

@@ -143,6 +143,12 @@ public static class AppConfig
         public int MaxTokens => GetInt(SectionName, "MaxTokens", 2048);
 
         /// <summary>
+        /// Встроенный поиск OpenAI через Responses API. Выключаемый: если прокси или модель
+        /// не поддерживают Responses/web_search, обычный чат откатывается на Chat Completions.
+        /// </summary>
+        public bool UseWebSearch => GetBool(SectionName, nameof(UseWebSearch), false);
+
+        /// <summary>
         /// Глубина рассуждений в обычном чате: minimal, low, medium, high. Значение вне
         /// списка означает «не передавать поле вовсе» — иначе неизвестный уровень бэкенд
         /// отверг бы вместе со всем запросом. Служебные запросы уровень не получают.
