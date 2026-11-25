@@ -232,7 +232,8 @@ public static partial class PostMediaHandler
     /// В отличие от embed'а сюда можно положить видео — оно проигрывается внутри контейнера.
     /// </summary>
     internal static MessageComponent BuildContainer(
-        SocialPost post, string postUrl, IList<string> fileNames, IList<string> oversized, PostStyle style)
+        SocialPost post, string postUrl, IList<string> fileNames, IList<string> oversized, PostStyle style,
+        string? translationNote = null)
     {
         var container = new ContainerBuilder().WithAccentColor(style.Accent);
         var header = BuildHeaderText(post, postUrl);
@@ -258,6 +259,11 @@ public static partial class PostMediaHandler
 
         container.AddComponent(new TextDisplayBuilder()
             .WithContent(BuildFooterText(style.Footer(), style.Icon(), post.PublishedAt)));
+
+        if (translationNote != null)
+        {
+            container.AddComponent(new TextDisplayBuilder().WithContent(translationNote));
+        }
 
         return new ComponentBuilderV2().AddComponent(container).Build();
     }
@@ -328,7 +334,8 @@ public static partial class PostMediaHandler
     }
 
     internal static Embed BuildEmbed(
-        SocialPost post, string postUrl, string? imageUrl, IList<string> oversized, PostStyle style)
+        SocialPost post, string postUrl, string? imageUrl, IList<string> oversized, PostStyle style,
+        string? translationNote = null)
     {
         var embed = new EmbedBuilder()
             .WithColor(style.Accent)
@@ -368,6 +375,16 @@ public static partial class PostMediaHandler
             }
 
             description.Append(style.TooBig(size, postUrl));
+        }
+
+        if (translationNote != null)
+        {
+            if (description.Length > 0)
+            {
+                description.Append("\n\n");
+            }
+
+            description.Append(translationNote);
         }
 
         if (description.Length > 0)

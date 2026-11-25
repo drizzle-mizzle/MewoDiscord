@@ -18,7 +18,7 @@ public static partial class XMediaHandler
 {
     private static readonly Color _xBlack = new(0x000000);
 
-    private static readonly PostMediaHandler.PostStyle _style = new(
+    internal static readonly PostMediaHandler.PostStyle Style = new(
         _xBlack,
         "x",
         BotMessages.XFooter,
@@ -37,7 +37,7 @@ public static partial class XMediaHandler
                 limit => XPostClient.TryGetPostAsync(link.StatusId, limit)))
             .ToList();
 
-        PostMediaHandler.HandleInBackground(message, requests, _style);
+        PostMediaHandler.HandleInBackground(message, requests, Style);
     }
 
     /// <summary>

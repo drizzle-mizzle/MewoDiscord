@@ -57,6 +57,7 @@ internal class Program
         _client = new DiscordSocketClient(config);
         _interactions = new InteractionService(_client.Rest);
         BotLogger.SetClient(_client);
+        XTranslationHandler.Initialize(_client);
 
         // БД исходных имён голосовых каналов, переименованных ботом
         ChannelNameStore.Load();
