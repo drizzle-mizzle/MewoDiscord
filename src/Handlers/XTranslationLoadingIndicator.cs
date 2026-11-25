@@ -29,7 +29,7 @@ internal sealed class XTranslationLoadingIndicator
         return indicator;
     }
 
-    internal static IEmote ReactionFor(Emote? loading) => loading ?? _fallback;
+    internal static IEmote ReactionFor(Emote? loading) => (IEmote?)loading ?? _fallback;
 
     public async Task StopAsync()
     {
