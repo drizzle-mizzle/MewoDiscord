@@ -1,4 +1,4 @@
-﻿namespace MewoDiscord.Helpers;
+namespace MewoDiscord.Helpers;
 
 public static class BotMessages
 {
@@ -55,8 +55,8 @@ public static class BotMessages
     public static string VoiceCommonWithLink(string text, string link) =>
         Format(nameof(VoiceCommonWithLink), ("{text}", text), ("{link}", link));
 
-    public static string VoiceConversationStartedCommon(string channel) =>
-        Format(nameof(VoiceConversationStartedCommon), ("{channel}", channel));
+    public static string VoiceConversationStartedCommon(string user, string channel) =>
+        Format(nameof(VoiceConversationStartedCommon), ("{user}", user), ("{channel}", channel));
 
     public static string VoiceConversationEndedCommon(string channel) =>
         Format(nameof(VoiceConversationEndedCommon), ("{channel}", channel));
@@ -141,6 +141,15 @@ public static class BotMessages
 
     public static string XTooBig(string size, string url) =>
         Format(nameof(XTooBig), ("{size}", size), ("{url}", url));
+
+    public static string XTranslationNoText() =>
+        Format(nameof(XTranslationNoText));
+
+    public static string XTranslationTooBig() =>
+        Format(nameof(XTranslationTooBig));
+
+    public static string XTranslationFailed() =>
+        Format(nameof(XTranslationFailed));
 
     public static string YoutubePreviewTitle(string title) =>
         Format(nameof(YoutubePreviewTitle), ("{title}", title));

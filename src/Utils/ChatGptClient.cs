@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using MewoDiscord.Helpers;
@@ -245,11 +245,15 @@ public static partial class ChatGptClient
     }
 
     /// <summary>
-    /// Одноразовый запрос к дешёвой «инстант»-модели: ни истории, ни сессии, ни картинок.
-    /// Нужен кастомным действиям — распознать попадание («ДА»/«НЕТ») и формализовать
-    /// запрос перед полноценной сессией. Пустая строка — ошибка или пустой ответ.
+    /// Одноразовый запрос к дешёвой «инстант»-модели: ни истории, ни сессии.
+    /// Нужен кастомным действиям и служебным проверкам — распознать попадание
+    /// («ДА»/«НЕТ»), формализовать запрос или осмотреть приложенные картинки.
+    /// Пустая строка — ошибка или пустой ответ.
     /// </summary>
-    public static async Task<string> AskInstantAsync(string prompt, int maxTokens = InstantMaxTokens)
+    public static async Task<string> AskInstantAsync(
+        string prompt,
+        int maxTokens = InstantMaxTokens,
+        IReadOnlyList<InputFile>? files = null)
     {
         if (!IsReady() || string.IsNullOrWhiteSpace(prompt))
         {
@@ -257,7 +261,7 @@ public static partial class ChatGptClient
         }
 
         var model = AppConfig.ChatGptSettings.InstantModel;
-        var turn = new ChatTurn("user", prompt, []);
+        var turn = PrepareUserTurn(prompt, files);
         var json = BuildChatRequestJson(model, maxTokens, [], turn);
 
         BotLogger.LogAi(BotLogger.ChatGptThreadKey, "⚡ Инстант-запрос ({Model}):\n{Text}", model, prompt);

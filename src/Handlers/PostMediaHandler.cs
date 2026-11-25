@@ -50,16 +50,36 @@ public static partial class PostMediaHandler
 
     /// <summary>
     /// Оформление ответа: у каждого источника своя акцентная полоса, подпись, иконка
-    /// и текст про невлезший файл.
+    /// и текст про невлезший файл. OnSentAsync позволяет источнику подключить действия
+    /// к уже отправленной карточке, не смешивая их с общей загрузкой медиа.
     /// </summary>
     public record PostStyle(
-        Color Accent, string Slug, Func<string> Footer, Func<Emote?> Icon, Func<string, string, string> TooBig);
+        Color Accent,
+        string Slug,
+        Func<string> Footer,
+        Func<Emote?> Icon,
+        Func<string, string, string> TooBig,
+        Func<PostSentMessage, Task>? OnSentAsync = null);
 
     /// <summary>
     /// Ссылка на пост и способ его достать. Потолок вложения приходит в FetchAsync, потому что
     /// у источника с лесенкой качеств от него зависит, какой файл вообще брать.
     /// </summary>
     public record PostRequest(string Url, Func<ulong, Task<SocialPost?>> FetchAsync);
+
+    /// <summary>
+    /// Отправленная карточка и всё необходимое, чтобы пересобрать её после действия
+    /// пользователя. Сюда не входят байты вложений: их можно снова скачать из Post.Media.
+    /// </summary>
+    public record PostSentMessage(
+        IUserMessage Message,
+        SocialPost Post,
+        string PostUrl,
+        IReadOnlyList<string> FileNames,
+        IReadOnlyList<string> Oversized,
+        PostStyle Style,
+        string? ThumbnailUrl,
+        bool IsContainer);
 
     /// <summary>
     /// Запускает обработку в фоне: скачивание медиа не должно задерживать остальную
@@ -161,10 +181,11 @@ public static partial class PostMediaHandler
             }
 
             var reference = new MessageReference(message.Id, failIfNotExists: false);
+            IUserMessage sent;
 
             if (attachments.Count > 0)
             {
-                await message.Channel.SendFilesAsync(
+                sent = await message.Channel.SendFilesAsync(
                     attachments,
                     components: BuildContainer(post, request.Url, fileNames, oversized, style),
                     flags: MessageFlags.ComponentsV2,
@@ -174,10 +195,24 @@ public static partial class PostMediaHandler
             else
             {
                 // Скачать было нечего — остаётся обычный embed с превью и ссылкой
-                await message.Channel.SendMessageAsync(
+                sent = await message.Channel.SendMessageAsync(
                     embed: BuildEmbed(post, request.Url, thumbnailUrl, oversized, style),
                     allowedMentions: AllowedMentions.None,
                     messageReference: reference);
+            }
+
+            if (style.OnSentAsync != null)
+            {
+                try
+                {
+                    await style.OnSentAsync(new PostSentMessage(
+                        sent, post, request.Url, fileNames, oversized, style, thumbnailUrl, attachments.Count > 0));
+                }
+                catch (Exception ex)
+                {
+                    // Дополнительное действие не должно отменять уже успешный ответ на пост
+                    BotLogger.Warning("Не удалось настроить действия для поста {Url}: {Message}", request.Url, ex.Message);
+                }
             }
 
             BotLogger.Information("Пост {Url} — отправлено файлов {Count}", request.Url, attachments.Count);
@@ -196,7 +231,7 @@ public static partial class PostMediaHandler
     /// Собирает контейнер Components V2: цветная полоса, заголовок с подписью, галерея медиа.
     /// В отличие от embed'а сюда можно положить видео — оно проигрывается внутри контейнера.
     /// </summary>
-    private static MessageComponent BuildContainer(
+    internal static MessageComponent BuildContainer(
         SocialPost post, string postUrl, IList<string> fileNames, IList<string> oversized, PostStyle style)
     {
         var container = new ContainerBuilder().WithAccentColor(style.Accent);
@@ -292,7 +327,7 @@ public static partial class PostMediaHandler
         return $"-# {text}";
     }
 
-    private static Embed BuildEmbed(
+    internal static Embed BuildEmbed(
         SocialPost post, string postUrl, string? imageUrl, IList<string> oversized, PostStyle style)
     {
         var embed = new EmbedBuilder()

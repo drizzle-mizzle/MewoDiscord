@@ -22,6 +22,11 @@ Discord bot for a small friend server. Built with .NET 10.0 and [Discord.NET](ht
   fetches the post, downloads its video or photos and replies with a blue Components V2 container that
   plays the media inline next to the post caption; files above the server upload limit are linked with a
   preview instead, and Discord's own link preview is suppressed on the original message
+- **X media and translations** — links to X/Twitter posts get the same media container treatment as
+  Telegram. With ChatGPT enabled, a post with a caption gets a 🌐 reaction that replaces it with a
+  Russian translation. A post containing 1–6 still images (and no video) also gets 🖼️: a cheap
+  vision model first checks every panel for meaningful non-Russian text, then only approved images
+  are redrawn with Russian lettering. Both actions are one-shot and one-way; no undo state is saved
 - **YouTube stats** — Discord's own YouTube preview stays untouched (it carries the player, and a bot
   cannot embed one anywhere); the bot replies under it with a thin red embed: likes, dislikes estimated
   by Return YouTube Dislike, views and the publish date, plus the full title when Discord's preview

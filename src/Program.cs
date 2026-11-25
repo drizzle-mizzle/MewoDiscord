@@ -1,4 +1,4 @@
-﻿using Discord;
+using Discord;
 using Discord.Interactions;
 using Discord.WebSocket;
 
@@ -108,6 +108,7 @@ internal class Program
         _client.Ready += () => RunInBackground(OnReady());
         _client.InteractionCreated += interaction => RunInBackground(OnInteractionCreated(interaction));
         _client.MessageReceived += message => RunInBackground(MessageHandler.HandleMessageReceived(message));
+        _client.ReactionAdded += (_, _, reaction) => RunInBackground(XTranslationHandler.HandleReactionAdded(reaction));
         _client.UserVoiceStateUpdated += (user, before, after) => RunInBackground(VoiceStatusHandler.HandleVoiceStateUpdated(user, before, after));
 
         await _client.LoginAsync(TokenType.Bot, AppConfig.BotToken);

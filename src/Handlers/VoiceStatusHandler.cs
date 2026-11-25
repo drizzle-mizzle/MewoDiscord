@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using Discord;
 using Discord.WebSocket;
 using MewoDiscord.Helpers;
@@ -165,7 +165,7 @@ public static class VoiceStatusHandler
 
                 // Общим объявляем в любом случае, даже без журнала: общий чат ждёт пары
                 // к «закончился разговор». Ссылка при этом будет только если журнал есть
-                await PublishCommonAsync(channel, BotMessages.VoiceConversationStartedCommon(channel.Mention), root);
+                await PublishCommonAsync(channel, BotMessages.VoiceConversationStartedCommon(name, channel.Mention), root);
             }
         }
 

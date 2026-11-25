@@ -1,4 +1,4 @@
-﻿using System.Text.RegularExpressions;
+using System.Text.RegularExpressions;
 
 using Discord;
 using Discord.WebSocket;
@@ -23,7 +23,8 @@ public static partial class XMediaHandler
         "x",
         BotMessages.XFooter,
         () => BotEmotes.X,
-        BotMessages.XTooBig);
+        BotMessages.XTooBig,
+        XTranslationHandler.RegisterAsync);
 
     /// <summary>
     /// Разбирает сообщение и, если в нём есть ссылки на посты, отвечает медиа.
