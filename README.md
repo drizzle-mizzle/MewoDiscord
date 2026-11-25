@@ -26,8 +26,8 @@ Discord bot for a small friend server. Built with .NET 10.0 and [Discord.NET](ht
   Telegram. With ChatGPT enabled, a post with a caption gets a 🌐 reaction that replaces it with a
   Russian translation. A post containing 1–6 still images (and no video) also gets 🖼️: a cheap
   vision model first checks every panel for meaningful non-Russian text, then only approved images
-  are redrawn with Russian lettering. Translations show an hourglass (animated for image work) and
-  a 🔄 reaction switches between the original and translated card. A 20-message, 10-minute cache
+  are redrawn with Russian lettering. Translations show one continuously animated application emoji
+  (or an hourglass if it is unavailable), and a 🔄 reaction switches between the original and translated card. A 20-message, 10-minute cache
   keeps both text variants in memory and both image variants on disk; cleanup runs every 5 minutes
   and stale files are removed on startup. After eviction the card can be restored from Discord and X
 - **YouTube stats** — Discord's own YouTube preview stays untouched (it carries the player, and a bot

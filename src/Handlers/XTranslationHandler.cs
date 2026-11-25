@@ -181,9 +181,7 @@ public static class XTranslationHandler
 
             if (needsTranslation)
             {
-                var animate = kind == TranslationKind.Images ||
-                    kind == TranslationKind.Toggle && entry.CanTranslateImages;
-                loading = await XTranslationLoadingIndicator.StartAsync(message, animate);
+                loading = await XTranslationLoadingIndicator.StartAsync(message);
             }
 
             await entry.OperationLock.WaitAsync();
@@ -201,9 +199,9 @@ public static class XTranslationHandler
                 {
                     result = kind switch
                     {
-                        TranslationKind.Text => await TranslateTextAsync(entry, loading),
-                        TranslationKind.Images => await TranslateImagesAsync(entry, loading),
-                        _ => await ToggleAsync(entry, loading)
+                        TranslationKind.Text => await TranslateTextAsync(entry),
+                        TranslationKind.Images => await TranslateImagesAsync(entry),
+                        _ => await ToggleAsync(entry)
                     };
                 }
                 catch (Exception ex)
@@ -397,8 +395,7 @@ public static class XTranslationHandler
     }
 
     private static async Task<TranslationResult> TranslateTextAsync(
-        XTranslationMessage entry,
-        XTranslationLoadingIndicator? loading)
+        XTranslationMessage entry)
     {
         var translated = entry.TranslatedCaption;
 
@@ -412,7 +409,7 @@ public static class XTranslationHandler
             }
         }
 
-        var result = await RenderMessageAsync(entry, true, loading, newCaption: translated);
+        var result = await RenderMessageAsync(entry, true, newCaption: translated);
 
         if (result == TranslationResult.Success)
         {
@@ -437,12 +434,11 @@ public static class XTranslationHandler
     }
 
     private static async Task<TranslationResult> TranslateImagesAsync(
-        XTranslationMessage entry,
-        XTranslationLoadingIndicator? loading)
+        XTranslationMessage entry)
     {
         if (entry.TranslatedImages.Count > 0)
         {
-            return await RenderMessageAsync(entry, true, loading);
+            return await RenderMessageAsync(entry, true);
         }
 
         var prepared = await PrepareImagesAsync(entry);
@@ -457,7 +453,6 @@ public static class XTranslationHandler
             var result = await RenderMessageAsync(
                 entry,
                 true,
-                loading,
                 newOriginals: prepared.Variants.Originals,
                 newTranslations: prepared.Variants.Translations);
 
@@ -594,8 +589,7 @@ public static class XTranslationHandler
     }
 
     private static async Task<TranslationResult> ToggleAsync(
-        XTranslationMessage entry,
-        XTranslationLoadingIndicator? loading)
+        XTranslationMessage entry)
     {
         if (entry.IsTranslated)
         {
@@ -611,7 +605,7 @@ public static class XTranslationHandler
                 }
             }
 
-            var result = await RenderMessageAsync(entry, false, loading, newOriginals: originals);
+            var result = await RenderMessageAsync(entry, false, newOriginals: originals);
 
             if (result == TranslationResult.Success)
             {
@@ -623,7 +617,7 @@ public static class XTranslationHandler
 
         if (entry.HasTranslation)
         {
-            var result = await RenderMessageAsync(entry, true, loading);
+            var result = await RenderMessageAsync(entry, true);
 
             if (result == TranslationResult.Success)
             {
@@ -668,7 +662,6 @@ public static class XTranslationHandler
             var result = await RenderMessageAsync(
                 entry,
                 true,
-                loading,
                 caption,
                 variants?.Originals,
                 variants?.Translations);
@@ -694,7 +687,6 @@ public static class XTranslationHandler
     private static async Task<TranslationResult> RenderMessageAsync(
         XTranslationMessage entry,
         bool translated,
-        XTranslationLoadingIndicator? loading,
         string? newCaption = null,
         IReadOnlyList<XTranslationImage>? newOriginals = null,
         IReadOnlyList<XTranslationImage>? newTranslations = null)
@@ -775,9 +767,6 @@ public static class XTranslationHandler
                 note);
             await context.Message.ModifyAsync(properties => properties.Embed = embed);
         }
-
-        // Индикатор отменяется именно успешным редактированием, а не окончанием генерации.
-        loading?.MessageEdited();
 
         if (newCaption != null)
         {

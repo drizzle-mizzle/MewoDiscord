@@ -1,0 +1,13 @@
+loading.gif
+
+Источник: https://commons.wikimedia.org/wiki/File:Loading_icon_cropped.gif
+Автор обрезанной версии: Skorp24.
+Основано на Loading icon.gif автора Ahm masum:
+https://commons.wikimedia.org/wiki/File:Loading_icon.gif
+
+Лицензия: Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0).
+Текст лицензии: https://creativecommons.org/licenses/by-sa/4.0/
+
+Изменения: размер изменён со 103 × 103 до 128 × 128 пикселей, почти белый фон
+сделан прозрачным, кадры заново закодированы с общей палитрой оттенков серого.
+Производное изображение распространяется на условиях CC BY-SA 4.0.

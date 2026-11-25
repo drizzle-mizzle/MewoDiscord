@@ -20,6 +20,8 @@ public static class BotEmotes
 
     private const string YoutubeName = "youtube";
 
+    private const string LoadingName = "translation_loading";
+
     /// <summary>
     /// Логотип Telegram. null — эмодзи не завелось (нет прав, нет картинки),
     /// и подписи останутся без иконки.
@@ -29,6 +31,11 @@ public static class BotEmotes
     public static Emote? X { get; private set; }
 
     public static Emote? Youtube { get; private set; }
+
+    /// <summary>
+    /// Зацикленный индикатор перевода. null — используется обычный Unicode ⏳.
+    /// </summary>
+    public static Emote? Loading { get; private set; }
 
     /// <summary>
     /// Тот же логотип картинкой — для иконки футера embed'а, куда разметка эмодзи не годится:
@@ -57,6 +64,7 @@ public static class BotEmotes
         Telegram = await ResolveAsync(client, existing, TelegramName, "telegram.png");
         X = await ResolveAsync(client, existing, XName, "x.png");
         Youtube = await ResolveAsync(client, existing, YoutubeName, "youtube.png");
+        Loading = await ResolveAsync(client, existing, LoadingName, "loading.gif");
     }
 
     /// <summary>
@@ -76,7 +84,7 @@ public static class BotEmotes
 
         if (!File.Exists(path))
         {
-            BotLogger.Warning("Картинка {File} не найдена — подписи останутся без иконки", path);
+            BotLogger.Warning("Картинка {File} не найдена — эмодзи {Name} будет недоступно", path, name);
             return null;
         }
 

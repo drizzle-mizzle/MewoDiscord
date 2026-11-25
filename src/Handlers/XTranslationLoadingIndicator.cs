@@ -5,42 +5,31 @@ using MewoDiscord.Helpers;
 namespace MewoDiscord.Handlers;
 
 /// <summary>
-/// Фоновый индикатор перевода. Текст держит статичные ⏳; изображения каждые три секунды
-/// меняют ⏳ на ⌛ и обратно, перед переключением снимая оба варианта реакций всех пользователей.
+/// Индикатор перевода из одной animated application emoji: кадры проигрывает клиент Discord,
+/// поэтому бот не меняет реакции по таймеру. Если эмодзи недоступно, остаётся статичный ⏳.
 /// </summary>
 internal sealed class XTranslationLoadingIndicator
 {
-    private static readonly TimeSpan _switchInterval = TimeSpan.FromSeconds(3);
-    private static readonly Emoji _waiting = new("⏳");
-    private static readonly Emoji _running = new("⌛");
+    private static readonly Emoji _fallback = new("⏳");
 
     private readonly IUserMessage _message;
-    private readonly CancellationTokenSource _cancellation = new();
-    private Task _animation = Task.CompletedTask;
+    private readonly IEmote _reaction;
     private int _stopped;
 
     private XTranslationLoadingIndicator(IUserMessage message)
     {
         _message = message;
+        _reaction = ReactionFor(BotEmotes.Loading);
     }
 
-    public static async Task<XTranslationLoadingIndicator> StartAsync(IUserMessage message, bool animate)
+    public static async Task<XTranslationLoadingIndicator> StartAsync(IUserMessage message)
     {
         var indicator = new XTranslationLoadingIndicator(message);
-        await indicator.AddQuietlyAsync(_waiting);
-
-        if (animate)
-        {
-            indicator._animation = indicator.AnimateAsync();
-        }
-
+        await indicator.AddQuietlyAsync();
         return indicator;
     }
 
-    /// <summary>
-    /// Событие успешного редактирования: больше не рисуем загрузку поверх готового перевода.
-    /// </summary>
-    public void MessageEdited() => _cancellation.Cancel();
+    internal static IEmote ReactionFor(Emote? loading) => loading ?? _fallback;
 
     public async Task StopAsync()
     {
@@ -49,40 +38,14 @@ internal sealed class XTranslationLoadingIndicator
             return;
         }
 
-        _cancellation.Cancel();
-
-        try
-        {
-            await _animation;
-        }
-        catch (OperationCanceledException)
-        {
-            // Штатная остановка после редактирования или ошибки перевода.
-        }
-
         await ClearAsync();
-        _cancellation.Dispose();
     }
 
-    private async Task AnimateAsync()
-    {
-        var next = _running;
-
-        while (true)
-        {
-            await Task.Delay(_switchInterval, _cancellation.Token);
-            await ClearAsync();
-            _cancellation.Token.ThrowIfCancellationRequested();
-            await AddQuietlyAsync(next);
-            next = next == _waiting ? _running : _waiting;
-        }
-    }
-
-    private async Task AddQuietlyAsync(Emoji emoji)
+    private async Task AddQuietlyAsync()
     {
         try
         {
-            await _message.AddReactionAsync(emoji);
+            await _message.AddReactionAsync(_reaction);
         }
         catch (Exception ex)
         {
@@ -95,26 +58,20 @@ internal sealed class XTranslationLoadingIndicator
 
     private async Task ClearAsync()
     {
-        await ClearAsync(_waiting);
-        await ClearAsync(_running);
-    }
-
-    private async Task ClearAsync(Emoji emoji)
-    {
         try
         {
-            await _message.RemoveAllReactionsForEmoteAsync(emoji);
+            await _message.RemoveAllReactionsForEmoteAsync(_reaction);
         }
         catch
         {
             // Без Manage Messages Discord позволяет снять хотя бы собственную реакцию.
             try
             {
-                await _message.RemoveReactionAsync(emoji, _message.Author);
+                await _message.RemoveReactionAsync(_reaction, _message.Author);
             }
             catch
             {
-                // Индикатор не должен сломать сам перевод или следующий его кадр.
+                // Индикатор не должен сломать сам перевод или редактирование сообщения.
             }
         }
     }
