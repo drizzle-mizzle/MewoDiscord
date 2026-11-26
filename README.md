@@ -134,6 +134,17 @@ tests are self-contained and need no network — neither ffmpeg nor yt-dlp is ev
 tests talk to a running CLIProxyAPI; the remaining `АИ_*` ones target the dormant OpenRouter code and
 only work if its sections are restored to `config.ini`.
 
+## Feature finalization
+
+Before committing or pushing a feature or fix, invoke `/feature-finalize`. The project skill restores
+NuGet packages, applies and verifies `dotnet format`, builds the whole solution in Release, runs the
+self-contained tests, validates Compose and builds the real `mewo-bot` Docker image. Every failure must
+be fixed and the full cycle rerun before pushing. The same checks can be launched directly:
+
+```bash
+bash .agents/skills/feature-finalize/scripts/finalize.sh
+```
+
 ## Dev bot
 
 `src/MewoDiscord.DevBot` is a small debugging console app that reads Discord with the production bot's
