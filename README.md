@@ -27,9 +27,11 @@ Discord bot for a small friend server. Built with .NET 10.0 and [Discord.NET](ht
   Russian translation. A post containing 1–6 still images (and no video) also gets 🖼️: a cheap
   vision model first checks every panel for meaningful non-Russian text, then only approved images
   are redrawn with Russian lettering. Translations show one continuously animated application emoji
-  (or an hourglass if it is unavailable), and a 🔄 reaction switches between the original and translated card. A 20-message, 10-minute cache
+  (or an hourglass if it is unavailable). 🔄 restores the original text and images, removes the
+  translation note and brings back the available 🌐/🖼️ reactions. A 20-message, 10-minute cache
   keeps both text variants in memory and both image variants on disk; cleanup runs every 5 minutes
-  and stale files are removed on startup. After eviction the card can be restored from Discord and X
+  and stale files are removed on startup. After eviction 🔄 fetches the original post from X again,
+  without assessing or regenerating any translations
 - **YouTube stats** — Discord's own YouTube preview stays untouched (it carries the player, and a bot
   cannot embed one anywhere); the bot replies under it with a thin red embed: likes, dislikes estimated
   by Return YouTube Dislike, views and the publish date, plus the full title when Discord's preview

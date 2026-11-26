@@ -43,6 +43,12 @@ internal sealed class XTranslationMessage
 
     public bool IsTranslated { get; private set; }
 
+    /// <summary>
+    /// Восстановленная карточка сейчас показывает переведённые вложения, но их исходники
+    /// после очистки кэша нужно скачать заново. Семантическая проверка и генерация для этого не нужны.
+    /// </summary>
+    public bool NeedsOriginalImageDownload { get; private set; }
+
     public bool TextTranslationStarted { get; private set; }
 
     public bool ImageTranslationStarted { get; private set; }
@@ -54,12 +60,6 @@ internal sealed class XTranslationMessage
     public bool CanTranslateImages => XTranslationHandler.CanTranslateImages(Context.Post, Context.IsContainer);
 
     public bool HasTranslation => TranslatedCaption != null || TranslatedImages.Count > 0;
-
-    /// <summary>
-    /// UI-признак: после восстановления оригинала байтов перевода может уже не быть,
-    /// но 🔄 должен остаться и по требованию создать перевод заново.
-    /// </summary>
-    public bool TranslationExpected { get; private set; }
 
     public void Touch(DateTimeOffset now) => LastAccessAt = now;
 
@@ -104,11 +104,7 @@ internal sealed class XTranslationMessage
     public SocialPost PostFor(bool translated, string? newTranslation = null) =>
         Context.Post with { Caption = CaptionFor(translated, newTranslation) };
 
-    public void StoreTranslatedCaption(string caption)
-    {
-        TranslatedCaption = caption;
-        TranslationExpected = true;
-    }
+    public void StoreTranslatedCaption(string caption) => TranslatedCaption = caption;
 
     public void StoreImageVariants(
         IReadOnlyList<XTranslationImage> originals,
@@ -116,24 +112,30 @@ internal sealed class XTranslationMessage
     {
         OriginalImages = originals;
         TranslatedImages = translations;
-        TranslationExpected = true;
     }
 
     public void StoreOriginalImages(IReadOnlyList<XTranslationImage> originals) => OriginalImages = originals;
 
-    public void StoreTranslatedImages(IReadOnlyList<XTranslationImage> translations)
-    {
+    public void StoreTranslatedImages(IReadOnlyList<XTranslationImage> translations) =>
         TranslatedImages = translations;
-        TranslationExpected = true;
+
+    public void SetRestoredView(bool translated, bool translatedImages)
+    {
+        SetView(translated);
+        NeedsOriginalImageDownload = translated && translatedImages;
     }
 
     public void SetView(bool translated)
     {
         IsTranslated = translated;
 
-        if (translated)
+        if (!translated)
         {
-            TranslationExpected = true;
+            // Исходная карточка снова работает как только что отправленная: обе кнопки доступны,
+            // а уже сохранённые переводы остаются в кэше и не будут генерироваться повторно.
+            TextTranslationStarted = false;
+            ImageTranslationStarted = false;
+            NeedsOriginalImageDownload = false;
         }
     }
 

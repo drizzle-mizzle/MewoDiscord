@@ -149,7 +149,7 @@ public static class XTranslationHandler
             return;
         }
 
-        var entry = await GetOrRestoreAsync(reaction);
+        var entry = await GetOrRestoreAsync(reaction, kind.Value);
 
         if (entry == null)
         {
@@ -172,6 +172,7 @@ public static class XTranslationHandler
 
         XTranslationLoadingIndicator? loading = null;
         var lockTaken = false;
+        var toggleSucceeded = false;
 
         try
         {
@@ -203,6 +204,7 @@ public static class XTranslationHandler
                         TranslationKind.Images => await TranslateImagesAsync(entry),
                         _ => await ToggleAsync(entry)
                     };
+                    toggleSucceeded = result == TranslationResult.Success;
                 }
                 catch (Exception ex)
                 {
@@ -220,7 +222,8 @@ public static class XTranslationHandler
                 await loading.StopAsync();
             }
 
-            if (kind == TranslationKind.Toggle && (entry.HasTranslation || entry.TranslationExpected))
+            // При неудачном откате сообщение осталось переведённым — возвращаем путь к повторной попытке.
+            if (kind == TranslationKind.Toggle && !toggleSucceeded && entry.IsTranslated)
             {
                 await AddReactionQuietlyAsync(message, _toggleReaction);
             }
@@ -270,7 +273,9 @@ public static class XTranslationHandler
         return _client?.CurrentUser != null && reaction.UserId == _client.CurrentUser.Id;
     }
 
-    private static async Task<XTranslationMessage?> GetOrRestoreAsync(SocketReaction reaction)
+    private static async Task<XTranslationMessage?> GetOrRestoreAsync(
+        SocketReaction reaction,
+        TranslationKind kind)
     {
         if (_cache.TryGet(reaction.MessageId, DateTimeOffset.UtcNow, out var known))
         {
@@ -288,7 +293,7 @@ public static class XTranslationHandler
                 return known;
             }
 
-            return await RestoreAsync(reaction);
+            return await RestoreAsync(reaction, kind);
         }
         finally
         {
@@ -296,7 +301,9 @@ public static class XTranslationHandler
         }
     }
 
-    private static async Task<XTranslationMessage?> RestoreAsync(SocketReaction reaction)
+    private static async Task<XTranslationMessage?> RestoreAsync(
+        SocketReaction reaction,
+        TranslationKind kind)
     {
         if (_client?.CurrentUser == null)
         {
@@ -332,6 +339,7 @@ public static class XTranslationHandler
 
             var postUrl = XPostClient.BuildPostUrl(link.Value.Author, link.Value.StatusId);
             var fileNames = message.Attachments.Select(attachment => attachment.Filename).ToList();
+            var translatedImages = fileNames.Any(IsTranslatedFileName);
             var context = new PostMediaHandler.PostSentMessage(
                 message,
                 original,
@@ -350,8 +358,16 @@ public static class XTranslationHandler
 
             try
             {
-                var translated = HasTranslatedNote(message, texts);
-                entry.SetView(translated);
+                if (kind == TranslationKind.Toggle)
+                {
+                    // На новой исходной карточке 🔄 нет. Если реакция пережила кэш, возвращаем
+                    // свежий оригинал из X, не восстанавливая и не создавая заново перевод.
+                    entry.SetRestoredView(true, translatedImages);
+                    return entry;
+                }
+
+                var translated = HasTranslatedNote(message, texts) || translatedImages;
+                entry.SetRestoredView(translated, translatedImages);
 
                 if (translated)
                 {
@@ -362,7 +378,7 @@ public static class XTranslationHandler
                         entry.StoreTranslatedCaption(caption);
                     }
 
-                    if (fileNames.Any(IsTranslatedFileName))
+                    if (translatedImages)
                     {
                         var images = await DownloadCurrentTranslationsAsync(entry, message.Attachments);
 
@@ -595,7 +611,9 @@ public static class XTranslationHandler
         {
             var originals = entry.OriginalImages;
 
-            if (entry.TranslatedImages.Count > 0 && originals.Count == 0)
+            // Для свежей карточки исходники уже лежат на диске. После потери кэша скачиваем
+            // только оригиналы из X: ни проверка текста на картинке, ни генерация здесь не нужны.
+            if ((entry.NeedsOriginalImageDownload || entry.TranslatedImages.Count > 0) && originals.Count == 0)
             {
                 originals = await DownloadOriginalImagesAsync(entry);
 
@@ -627,8 +645,8 @@ public static class XTranslationHandler
             return result;
         }
 
-        // После очистки на карточке может остаться только 🔄 и сам оригинал. В этом случае
-        // переключение создаёт перевод заново, а не делает вид, что старый перевод сохранился.
+        // Запасной путь для ручного 🔄 на исходной карточке: сохранённого перевода нет,
+        // поэтому создаём доступные варианты заново.
         var caption = entry.CanTranslateText ? await TranslateCaptionAsync(entry.Context.Post.Caption) : null;
         ImageVariants? variants = null;
 
@@ -711,12 +729,7 @@ public static class XTranslationHandler
             ? images.Select(image => image.FileName).ToList()
             : context.FileNames.ToList();
         var post = entry.PostFor(translated, newCaption);
-        var knownTranslations = newTranslations ?? entry.TranslatedImages;
-        var hasTranslation = entry.TranslationExpected || newCaption != null ||
-            entry.TranslatedCaption != null || knownTranslations.Count > 0;
-        var note = hasTranslation
-            ? translated ? BotMessages.XTranslationTranslatedNote() : BotMessages.XTranslationOriginalNote()
-            : null;
+        var note = translated ? BotMessages.XTranslationTranslatedNote() : null;
 
         if (context.IsContainer)
         {
@@ -784,12 +797,29 @@ public static class XTranslationHandler
 
         entry.SetView(translated);
 
-        if (hasTranslation)
+        if (translated)
         {
             await AddReactionQuietlyAsync(context.Message, _toggleReaction);
         }
+        else
+        {
+            await RestoreTranslationReactionsAsync(entry);
+        }
 
         return TranslationResult.Success;
+    }
+
+    internal static async Task RestoreTranslationReactionsAsync(XTranslationMessage entry)
+    {
+        if (entry.CanTranslateText)
+        {
+            await AddReactionQuietlyAsync(entry.Context.Message, _textReaction);
+        }
+
+        if (entry.CanTranslateImages)
+        {
+            await AddReactionQuietlyAsync(entry.Context.Message, _imagesReaction);
+        }
     }
 
     /// <summary>

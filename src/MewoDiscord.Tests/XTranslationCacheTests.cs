@@ -122,24 +122,35 @@ public class XTranslationCacheTests
     }
 
     [Fact]
-    public void X_ПереключениеХранитОригинальныйИПереведённыйТекст()
+    public void X_ОткатИспользуетСохранённыеТекстИКартинкиИРазблокируетКнопки()
     {
         var root = TempDirectory();
 
         try
         {
             var cache = new XTranslationMessageCache(root);
-            var entry = cache.AddOrGet(Context(1, "Original"), _now);
+            var entry = cache.AddOrGet(Context(1, "Original", [Photo(1)]), _now);
+            XTranslationImage[] originals = [new("original.png", "x-original-1.png", "image/png", 3)];
+            XTranslationImage[] translations = [new("translated.png", "x-translated-1.png", "image/png", 3)];
+
+            Assert.True(entry.TryStartText());
+            Assert.True(entry.TryStartImages());
             entry.StoreTranslatedCaption("Перевод");
+            entry.StoreImageVariants(originals, translations);
             entry.SetView(true);
 
             Assert.Equal("Перевод", entry.PostFor(entry.IsTranslated).Caption);
-            Assert.True(entry.HasTranslation);
+            Assert.Same(translations, entry.ImagesFor(entry.IsTranslated));
+            Assert.False(entry.TryStartText());
+            Assert.False(entry.TryStartImages());
 
             entry.SetView(false);
 
             Assert.Equal("Original", entry.PostFor(entry.IsTranslated).Caption);
-            Assert.True(entry.TranslationExpected);
+            Assert.Same(originals, entry.ImagesFor(entry.IsTranslated));
+            Assert.True(entry.HasTranslation);
+            Assert.True(entry.TryStartText());
+            Assert.True(entry.TryStartImages());
         }
         finally
         {
@@ -147,11 +158,68 @@ public class XTranslationCacheTests
         }
     }
 
-    private static PostMediaHandler.PostSentMessage Context(ulong id, string caption = "Текст")
+    [Fact]
+    public void X_ВосстановленныйПереводТребуетТолькоОригинальныеКартинки()
+    {
+        var root = TempDirectory();
+
+        try
+        {
+            var cache = new XTranslationMessageCache(root);
+            var entry = cache.AddOrGet(Context(1, "Original", [Photo(1)]), _now);
+
+            entry.SetRestoredView(translated: true, translatedImages: true);
+
+            Assert.True(entry.IsTranslated);
+            Assert.True(entry.NeedsOriginalImageDownload);
+            Assert.False(entry.HasTranslation);
+            Assert.Empty(entry.TranslatedImages);
+            Assert.Equal("Original", entry.PostFor(false).Caption);
+
+            entry.SetView(false);
+
+            Assert.False(entry.NeedsOriginalImageDownload);
+        }
+        finally
+        {
+            DeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task X_ОткатВозвращаетДоступныеРаздельныеРеакции()
+    {
+        var root = TempDirectory();
+
+        try
+        {
+            var cache = new XTranslationMessageCache(root);
+            var both = cache.AddOrGet(Context(1, "Original", [Photo(1)]), _now);
+            var textOnly = cache.AddOrGet(Context(2, "Original"), _now);
+            var imagesOnly = cache.AddOrGet(Context(3, "", [Photo(1)]), _now);
+
+            await XTranslationHandler.RestoreTranslationReactionsAsync(both);
+            await XTranslationHandler.RestoreTranslationReactionsAsync(textOnly);
+            await XTranslationHandler.RestoreTranslationReactionsAsync(imagesOnly);
+
+            Assert.Equal(["🌐", "🖼️"], AddedReactions(both));
+            Assert.Equal(["🌐"], AddedReactions(textOnly));
+            Assert.Equal(["🖼️"], AddedReactions(imagesOnly));
+        }
+        finally
+        {
+            DeleteDirectory(root);
+        }
+    }
+
+    private static PostMediaHandler.PostSentMessage Context(
+        ulong id,
+        string caption = "Текст",
+        IReadOnlyList<SocialMedia>? media = null)
     {
         var message = DispatchProxy.Create<IUserMessage, MessageProxy>();
         ((MessageProxy)(object)message).Id = id;
-        var post = new SocialPost("Автор", "@author", caption, [], null);
+        var post = new SocialPost("Автор", "@author", caption, media ?? [], null);
         var style = new PostMediaHandler.PostStyle(
             default,
             "x",
@@ -169,6 +237,12 @@ public class XTranslationCacheTests
             null,
             true);
     }
+
+    private static SocialMedia Photo(int index) =>
+        new($"https://pbs.twimg.com/media/{index}.jpg", IsVideo: false, ThumbnailUrl: null);
+
+    private static List<string> AddedReactions(XTranslationMessage entry) =>
+        ((MessageProxy)(object)entry.Context.Message).AddedReactions;
 
     private static string TempDirectory()
     {
@@ -189,11 +263,25 @@ public class XTranslationCacheTests
     {
         public ulong Id { get; set; }
 
+        public List<string> AddedReactions { get; } = [];
+
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
         {
             if (targetMethod?.Name == "get_Id")
             {
                 return Id;
+            }
+
+            if (targetMethod?.Name == nameof(IUserMessage.AddReactionAsync) &&
+                args?.FirstOrDefault() is IEmote emote)
+            {
+                AddedReactions.Add(emote.Name);
+                return Task.CompletedTask;
+            }
+
+            if (targetMethod?.ReturnType == typeof(Task))
+            {
+                return Task.CompletedTask;
             }
 
             return targetMethod?.ReturnType.IsValueType == true

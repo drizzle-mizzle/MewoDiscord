@@ -154,9 +154,6 @@ public static class BotMessages
     public static string XTranslationTranslatedNote() =>
         Format(nameof(XTranslationTranslatedNote));
 
-    public static string XTranslationOriginalNote() =>
-        Format(nameof(XTranslationOriginalNote));
-
     public static string YoutubePreviewTitle(string title) =>
         Format(nameof(YoutubePreviewTitle), ("{title}", title));
 
